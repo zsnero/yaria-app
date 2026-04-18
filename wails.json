@@ -1,0 +1,15 @@
+{
+  "name": "YariaApp",
+  "outputfilename": "yaria-app",
+  "frontend:dir": "frontend",
+  "wailsjsdir": "frontend/src",
+  "assetdir": "frontend/src",
+  "build:tags": "webkit2_41",
+  "info": {
+    "companyName": "Yaria",
+    "productName": "Yaria",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2025",
+    "comments": "Yaria Desktop - Video downloader"
+  }
+}

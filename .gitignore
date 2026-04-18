@@ -1,0 +1,44 @@
+# Build output
+build/
+YariaApp
+
+# Proprietary Mantorex services (not opensource)
+search_service.go
+stream_service.go
+library_service.go
+tmdb_service.go
+pro_bindings.go
+
+# Mantorex frontend (proprietary)
+frontend/src/css/pro.css
+frontend/src/js/pages/home.js
+frontend/src/js/pages/search.js
+frontend/src/js/pages/detail.js
+frontend/src/js/pages/player.js
+frontend/src/js/pages/library.js
+frontend/src/js/components/card.js
+frontend/src/js/components/row.js
+frontend/src/js/components/torrentlist.js
+
+# Unused vendor libs (Video.js removed)
+frontend/src/vendor/
+
+# Wails generated bindings (auto-generated, not needed in repo)
+frontend/src/wailsjs/
+
+# Replaced stub
+frontend/src/js/pages/download.js
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Runtime / config
+.yaria/
+*.log
