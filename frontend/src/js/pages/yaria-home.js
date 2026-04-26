@@ -248,11 +248,16 @@ async function renderYariaHome(container) {
         html += `<div class="format-card audio-fmt-card${sel}" data-audio-fmt="${f}"><div class="format-card-label">${f.toUpperCase()}</div></div>`;
       });
     } else {
+      if (!selectedFormat) selectedFormat = 'best';
+
+      // "Best" quality option - let yt-dlp decide
+      const bestSel = selectedFormat === 'best' ? ' selected' : '';
+      html += `<div class="format-card${bestSel}" data-format="best">
+        <div class="format-card-label">Best</div>
+        <div class="format-card-ext" style="font-size:10px;color:var(--text-muted);">Auto</div>
+      </div>`;
+
       if (formats.video.length > 0) {
-        if (!selectedFormat) {
-          const p = formats.video.find(f => f.resolution === '1080p');
-          selectedFormat = p ? (p.resolution || p.format_id) : (formats.video[0].resolution || formats.video[0].format_id || 'video-0');
-        }
         formats.video.forEach((f, i) => {
           const key = f.resolution || f.format_id || `video-${i}`;
           const sel = selectedFormat === key ? ' selected' : '';
@@ -262,7 +267,6 @@ async function renderYariaHome(container) {
           </div>`;
         });
       } else {
-        if (!selectedFormat) selectedFormat = '1080p';
         ['2160p', '1440p', '1080p', '720p', '480p', '360p'].forEach(res => {
           const sel = selectedFormat === res ? ' selected' : '';
           html += `<div class="format-card${sel}" data-format="${res}"><div class="format-card-label">${res}</div></div>`;
@@ -305,6 +309,16 @@ async function renderYariaHome(container) {
     btn.textContent = 'Starting...';
 
     try {
+      // Check for existing/in-progress download of the same URL
+      const existing = await API.checkExistingDownload(url, downloadDir);
+      if (existing && existing.exists) {
+        if (!confirm(existing.message + '\n\nDownload anyway?')) {
+          btn.textContent = 'Download';
+          btn.disabled = false;
+          return;
+        }
+      }
+
       const result = await API.startDownload(url, selectedFormat, downloadDir, audioOnly, audioFormat);
       const dlId = result.id;
 

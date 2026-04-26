@@ -10,6 +10,18 @@ const API = {
   async clearCache(type) {
     return window.go.main.SettingsService.ClearCache(type);
   },
+  async saveProxy(type, addr) {
+    return window.go.main.SettingsService.SaveProxy(type || 'none', addr || '');
+  },
+  async getProxy() {
+    return window.go.main.SettingsService.GetProxy();
+  },
+  async saveSpeedLimit(limitBytes) {
+    return window.go.main.SettingsService.SaveSpeedLimit(limitBytes || 0);
+  },
+  async getSpeedLimit() {
+    return window.go.main.SettingsService.GetSpeedLimit();
+  },
 
   // Yaria Download
   async initDeps() {
@@ -42,6 +54,18 @@ const API = {
   async getDownloadDir() {
     return window.go.main.DownloadService.GetDownloadDir();
   },
+  async checkExistingDownload(url, downloadDir) {
+    return window.go.main.DownloadService.CheckExistingDownload(url, downloadDir || '');
+  },
+  async detectPlaylist(url) {
+    return window.go.main.DownloadService.DetectPlaylist(url);
+  },
+  async setMaxConcurrent(n) {
+    return window.go.main.DownloadService.SetMaxConcurrent(n);
+  },
+  async getMaxConcurrent() {
+    return window.go.main.DownloadService.GetMaxConcurrent();
+  },
 
   // License
   async checkLicense() {
@@ -70,6 +94,9 @@ const API = {
   async ffmpegPath() {
     return window.go.main.DepsService.FFmpegPath();
   },
+  async getStreamDetails(filePath) {
+    return window.go.main.DepsService.GetStreamDetails(filePath);
+  },
 
   // Codecs
   async checkCodecs() {
@@ -83,8 +110,8 @@ const API = {
   async detectPlayers() {
     return window.go.main.PlayerService.DetectPlayers();
   },
-  async launchPlayer(streamURL, playerName, title) {
-    return window.go.main.PlayerService.LaunchPlayer(streamURL, playerName || '', title || '');
+  async launchPlayer(streamURL, playerName, title, resumeSeconds) {
+    return window.go.main.PlayerService.LaunchPlayer(streamURL, playerName || '', title || '', resumeSeconds || 0);
   },
 
   // --- Pro methods (Mantorex) ---
@@ -107,6 +134,12 @@ const API = {
   },
   async stopStream() {
     return window.go.main.StreamService.StopStream();
+  },
+  async pauseStream() {
+    return window.go.main.StreamService.PauseStream();
+  },
+  async resumeStream() {
+    return window.go.main.StreamService.ResumeStream();
   },
   async getLibrary() {
     return window.go.main.LibraryService.GetAll();
@@ -135,6 +168,18 @@ const API = {
   },
   async setLastKnownEpisode(id, season, episode, airDate) {
     return window.go.main.LibraryService.SetLastKnownEpisode(id, season, episode, airDate || '');
+  },
+  async getRecentlyAdded(days) {
+    return window.go.main.LibraryService.GetRecentlyAdded(days || 7);
+  },
+  async getInProgress() {
+    return window.go.main.LibraryService.GetInProgress();
+  },
+  async exportLibrary() {
+    return window.go.main.LibraryService.ExportLibrary();
+  },
+  async importLibrary(jsonData) {
+    return window.go.main.LibraryService.ImportLibrary(jsonData);
   },
   async tmdbSearch(q, page) {
     return window.go.main.TMDBService.SearchMulti(q, page || 1);

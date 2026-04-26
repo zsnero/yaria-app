@@ -73,6 +73,7 @@ func main() {
 		},
 		OnShutdown: func(ctx context.Context) {
 			ProShutdown(ctx, proServices)
+			downloadService.shutdown(ctx)
 			app.shutdown(ctx)
 		},
 		Bind: bindings,

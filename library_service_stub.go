@@ -42,3 +42,15 @@ func (l *LibraryService) MarkEpisodeWatched(id string, season, episode int) map[
 func (l *LibraryService) SetLastKnownEpisode(id string, season, episode int, airDate string) map[string]interface{} {
 	return map[string]interface{}{"error": stubErr}
 }
+
+func (l *LibraryService) GetRecentlyAdded(days int) []interface{} { return nil }
+
+func (l *LibraryService) GetInProgress() []interface{} { return nil }
+
+func (l *LibraryService) ExportLibrary() map[string]interface{} {
+	return map[string]interface{}{"error": stubErr}
+}
+
+func (l *LibraryService) ImportLibrary(jsonData string) map[string]interface{} {
+	return map[string]interface{}{"error": stubErr}
+}

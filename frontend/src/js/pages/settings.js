@@ -55,6 +55,45 @@ async function renderSettings(container) {
     </div>
 
     <div class="setting-group">
+      <div class="setting-label">Proxy</div>
+      <div class="setting-desc">Route downloads through a proxy server.</div>
+      <select id="proxy-type" class="setting-input" style="margin-bottom:8px;">
+        <option value="none">No Proxy</option>
+        <option value="http">HTTP Proxy</option>
+        <option value="socks5">SOCKS5 Proxy</option>
+      </select>
+      <input type="text" class="setting-input" id="proxy-addr" placeholder="e.g. http://127.0.0.1:8080" style="display:none;">
+      <div class="setting-saved" id="proxy-saved">Saved!</div>
+    </div>
+
+    <div class="setting-group">
+      <div class="setting-label">Download Speed Limit</div>
+      <div class="setting-desc">Limit download bandwidth. Applies to video downloads.</div>
+      <select id="speed-limit" class="setting-input">
+        <option value="0">Unlimited</option>
+        <option value="524288">512 KB/s</option>
+        <option value="1048576">1 MB/s</option>
+        <option value="2097152">2 MB/s</option>
+        <option value="5242880">5 MB/s</option>
+        <option value="10485760">10 MB/s</option>
+      </select>
+      <div class="setting-saved" id="speed-saved">Saved!</div>
+    </div>
+
+    <div class="setting-group">
+      <div class="setting-label">Concurrent Downloads</div>
+      <div class="setting-desc">Maximum number of simultaneous downloads.</div>
+      <select id="max-concurrent" class="setting-input">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="5">5</option>
+        <option value="10">10</option>
+      </select>
+      <div class="setting-saved" id="concurrent-saved">Saved!</div>
+    </div>
+
+    <div class="setting-group">
       <div class="setting-label">About</div>
       <div class="setting-desc" style="margin-top:8px">
         Yaria Desktop App v1.0.0<br>
@@ -92,6 +131,84 @@ async function renderSettings(container) {
       }
     }, 800);
   });
+
+  // --- Proxy settings ---
+  const proxyTypeEl = page.querySelector('#proxy-type');
+  const proxyAddrEl = page.querySelector('#proxy-addr');
+  const proxySaved = page.querySelector('#proxy-saved');
+
+  // Show/hide address input based on proxy type
+  proxyTypeEl.addEventListener('change', async () => {
+    const type = proxyTypeEl.value;
+    proxyAddrEl.style.display = (type === 'none') ? 'none' : 'block';
+    try {
+      await API.saveProxy(type, proxyAddrEl.value);
+      proxySaved.textContent = 'Saved!';
+      proxySaved.style.color = 'var(--green)';
+      proxySaved.style.display = 'block';
+      setTimeout(() => { proxySaved.style.display = 'none'; }, 3000);
+    } catch(e) {}
+  });
+
+  let proxyAddrTimeout;
+  proxyAddrEl.addEventListener('input', () => {
+    clearTimeout(proxyAddrTimeout);
+    proxyAddrTimeout = setTimeout(async () => {
+      try {
+        await API.saveProxy(proxyTypeEl.value, proxyAddrEl.value.trim());
+        proxySaved.textContent = 'Saved!';
+        proxySaved.style.color = 'var(--green)';
+        proxySaved.style.display = 'block';
+        setTimeout(() => { proxySaved.style.display = 'none'; }, 3000);
+      } catch(e) {}
+    }, 800);
+  });
+
+  // Load saved proxy settings
+  try {
+    const proxy = await API.getProxy();
+    if (proxy.type) proxyTypeEl.value = proxy.type;
+    if (proxy.addr) proxyAddrEl.value = proxy.addr;
+    if (proxy.type && proxy.type !== 'none') proxyAddrEl.style.display = 'block';
+  } catch(e) {}
+
+  // --- Speed limit ---
+  const speedLimitEl = page.querySelector('#speed-limit');
+  const speedSaved = page.querySelector('#speed-saved');
+  speedLimitEl.addEventListener('change', async () => {
+    try {
+      await API.saveSpeedLimit(parseInt(speedLimitEl.value, 10));
+      speedSaved.textContent = 'Saved!';
+      speedSaved.style.color = 'var(--green)';
+      speedSaved.style.display = 'block';
+      setTimeout(() => { speedSaved.style.display = 'none'; }, 3000);
+    } catch(e) {}
+  });
+
+  // Load saved speed limit
+  try {
+    const limit = await API.getSpeedLimit();
+    if (limit) speedLimitEl.value = String(limit);
+  } catch(e) {}
+
+  // --- Concurrent downloads ---
+  const maxConcurrentEl = page.querySelector('#max-concurrent');
+  const concurrentSaved = page.querySelector('#concurrent-saved');
+  maxConcurrentEl.addEventListener('change', async () => {
+    try {
+      await API.setMaxConcurrent(parseInt(maxConcurrentEl.value, 10));
+      concurrentSaved.textContent = 'Saved!';
+      concurrentSaved.style.color = 'var(--green)';
+      concurrentSaved.style.display = 'block';
+      setTimeout(() => { concurrentSaved.style.display = 'none'; }, 3000);
+    } catch(e) {}
+  });
+
+  // Load saved max concurrent
+  try {
+    const maxC = await API.getMaxConcurrent();
+    if (maxC) maxConcurrentEl.value = String(maxC);
+  } catch(e) {}
 
   // --- Back ---
   page.querySelector('#settings-back').addEventListener('click', () => window.history.back());

@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -87,6 +88,43 @@ func (d *DepsService) CheckDeps() map[string]interface{} {
 			},
 		},
 	}
+}
+
+// GetStreamDetails extracts video/audio stream information from a file.
+func (d *DepsService) GetStreamDetails(filePath string) map[string]interface{} {
+	// ffprobe is in the same directory as ffmpeg
+	ffprobePath := ""
+	ffmpegDir := filepath.Dir(d.FFmpegPath())
+	if ffmpegDir != "" {
+		probe := filepath.Join(ffmpegDir, "ffprobe")
+		if _, err := os.Stat(probe); err == nil {
+			ffprobePath = probe
+		}
+	}
+	if ffprobePath == "" {
+		if path, err := exec.LookPath("ffprobe"); err == nil {
+			ffprobePath = path
+		}
+	}
+	if ffprobePath == "" {
+		return map[string]interface{}{"error": "ffprobe not found"}
+	}
+
+	cmd := exec.Command(ffprobePath,
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-show_format",
+		filePath,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+
+	var result map[string]interface{}
+	json.Unmarshal(out, &result)
+	return result
 }
 
 // InstallFFmpeg downloads a static FFmpeg binary from GitHub.

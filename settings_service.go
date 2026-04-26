@@ -140,6 +140,43 @@ func (s *SettingsService) ClearCache(cacheType string) map[string]interface{} {
 	}
 }
 
+// SaveProxy saves proxy configuration.
+func (s *SettingsService) SaveProxy(proxyType, proxyAddr string) map[string]interface{} {
+	proxyType = strings.TrimSpace(proxyType)
+	proxyAddr = strings.TrimSpace(proxyAddr)
+
+	if err := appconfig.SetProxyType(proxyType); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if proxyAddr != "" {
+		if err := appconfig.SetProxyAddr(proxyAddr); err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return map[string]interface{}{"status": "saved"}
+}
+
+// GetProxy returns the current proxy configuration.
+func (s *SettingsService) GetProxy() map[string]interface{} {
+	return map[string]interface{}{
+		"type": appconfig.ProxyType(),
+		"addr": appconfig.ProxyAddr(),
+	}
+}
+
+// SaveSpeedLimit saves the download speed limit in bytes/sec. 0 = unlimited.
+func (s *SettingsService) SaveSpeedLimit(limitBytes int64) map[string]interface{} {
+	if err := appconfig.SetSpeedLimit(limitBytes); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "saved", "limit": limitBytes}
+}
+
+// GetSpeedLimit returns the current speed limit in bytes/sec.
+func (s *SettingsService) GetSpeedLimit() int64 {
+	return appconfig.SpeedLimit()
+}
+
 // calcDirSize recursively calculates the total size of a directory.
 func calcDirSize(path string) int64 {
 	var size int64

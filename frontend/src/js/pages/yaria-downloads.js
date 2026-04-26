@@ -73,7 +73,7 @@ async function refreshDownloadList() {
     }
     if (emptyEl) emptyEl.style.display = 'none';
 
-    const active = arr.filter(d => d.status === 'downloading' || d.status === 'queued' || d.status === 'metadata');
+    const active = arr.filter(d => d.status === 'downloading' || d.status === 'queued' || d.status === 'metadata' || d.status === 'processing');
     const completed = arr.filter(d => d.status === 'complete' || d.status === 'error' || d.status === 'cancelled');
 
     // Active section
@@ -166,6 +166,7 @@ function getStatusClass(status) {
     case 'complete': return 'status-complete';
     case 'error': return 'status-error';
     case 'cancelled': return 'status-cancelled';
+    case 'processing': return 'status-processing';
     case 'queued': case 'metadata': return 'status-queued';
     default: return '';
   }

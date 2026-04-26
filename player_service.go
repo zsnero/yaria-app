@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -44,7 +47,8 @@ func (p *PlayerService) DetectPlayers() []playerInfo {
 }
 
 // LaunchPlayer opens a stream URL in the specified player.
-func (p *PlayerService) LaunchPlayer(streamURL string, playerName string, title string) map[string]interface{} {
+// If resumeSeconds > 0, the player starts at that position.
+func (p *PlayerService) LaunchPlayer(streamURL string, playerName string, title string, resumeSeconds int) map[string]interface{} {
 	if streamURL == "" {
 		return map[string]interface{}{"error": "no stream URL"}
 	}
@@ -74,6 +78,19 @@ func (p *PlayerService) LaunchPlayer(streamURL string, playerName string, title 
 	if chosen.name == "mpv" && title != "" {
 		args = append(args, fmt.Sprintf("--force-media-title=%s", title))
 	}
+	if resumeSeconds > 0 {
+		if chosen.name == "mpv" {
+			args = append(args, fmt.Sprintf("--start=%d", resumeSeconds))
+		} else if chosen.name == "vlc" {
+			args = append(args, fmt.Sprintf("--start-time=%d", resumeSeconds))
+		}
+	}
+	// Auto-discover subtitle files
+	if strings.HasPrefix(streamURL, "/") && chosen.name == "mpv" {
+		for _, sub := range findSubtitleFiles(streamURL) {
+			args = append(args, "--sub-file="+sub)
+		}
+	}
 	args = append(args, streamURL)
 
 	cmd := exec.Command(chosen.binary, args...)
@@ -85,6 +102,41 @@ func (p *PlayerService) LaunchPlayer(streamURL string, playerName string, title 
 	go cmd.Wait()
 
 	return map[string]interface{}{"status": "launched", "player": chosen.name}
+}
+
+func findSubtitleFiles(videoPath string) []string {
+	if videoPath == "" {
+		return nil
+	}
+	dir := filepath.Dir(videoPath)
+	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
+
+	subExts := []string{".srt", ".ass", ".ssa", ".sub", ".vtt", ".idx"}
+	var subs []string
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		for _, subExt := range subExts {
+			if ext == subExt {
+				// Check if subtitle matches the video name
+				subBase := strings.TrimSuffix(name, filepath.Ext(name))
+				// Match if subtitle starts with the video name (handles .en.srt, .forced.srt etc)
+				if strings.HasPrefix(strings.ToLower(subBase), strings.ToLower(base)) {
+					subs = append(subs, filepath.Join(dir, name))
+				}
+			}
+		}
+	}
+	return subs
 }
 
 func installHint() string {
