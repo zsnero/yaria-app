@@ -1,4 +1,4 @@
-// Yaria Home Page - Video & Audio Downloader with branding hero
+// Yaria Home Page - Video & Audio Downloader
 let _yariaHomeEventCleanups = [];
 let _yariaHomeDepsReady = false;
 
@@ -8,7 +8,7 @@ async function renderYariaHome(container) {
   const page = document.createElement('div');
   page.className = 'yaria-home-page';
 
-  // Branding hero
+  // Hero
   const hero = document.createElement('div');
   hero.className = 'yaria-hero';
   hero.innerHTML = `
@@ -18,12 +18,12 @@ async function renderYariaHome(container) {
   `;
   page.appendChild(hero);
 
-  // URL input section
+  // URL input
   const urlSection = document.createElement('div');
   urlSection.className = 'download-url-section';
   urlSection.innerHTML = `
     <div class="download-input-wrap">
-      <input type="text" class="download-input" id="dl-url" placeholder="Paste a video URL (YouTube, Vimeo, Twitter, etc.)" autocomplete="off">
+      <input type="text" class="download-input" id="dl-url" placeholder="Paste a video URL..." autocomplete="off">
       <button class="btn btn-primary" id="dl-fetch-btn">Fetch</button>
     </div>
     <div id="dl-deps-status" class="download-deps-status">
@@ -33,134 +33,93 @@ async function renderYariaHome(container) {
   `;
   page.appendChild(urlSection);
 
-  // Metadata display (hidden initially)
-  const metaSection = document.createElement('div');
-  metaSection.className = 'download-meta';
-  metaSection.id = 'dl-meta';
-  metaSection.style.display = 'none';
-  page.appendChild(metaSection);
+  // Content area: holds the current fetch/format/download flow
+  const contentArea = document.createElement('div');
+  contentArea.id = 'dl-content';
+  page.appendChild(contentArea);
 
-  // Format selection (hidden initially)
-  const formatSection = document.createElement('div');
-  formatSection.className = 'download-formats';
-  formatSection.id = 'dl-formats';
-  formatSection.style.display = 'none';
-  page.appendChild(formatSection);
-
-  // Download controls (hidden initially)
-  const controlsSection = document.createElement('div');
-  controlsSection.className = 'download-controls';
-  controlsSection.id = 'dl-controls';
-  controlsSection.style.display = 'none';
-  controlsSection.innerHTML = `
-    <div class="dir-picker">
-      <label class="setting-label">Download Directory</label>
-      <div class="dir-picker-row">
-        <input type="text" class="setting-input dir-input" id="dl-dir" readonly placeholder="Select download directory...">
-        <button class="btn btn-ghost btn-sm" id="dl-browse-btn">Browse</button>
-      </div>
-    </div>
-    <button class="btn btn-primary download-btn" id="dl-start-btn" disabled>Download</button>
-    <div id="dl-toast" class="download-toast" style="display:none;"></div>
-  `;
-  page.appendChild(controlsSection);
+  // No active downloads section here -- use Downloads page instead
 
   container.appendChild(page);
 
   // State
+  let currentURL = '';
   let currentMeta = null;
   let selectedFormat = null;
   let audioOnly = false;
   let audioFormat = 'mp3';
   let formats = { video: [], audio: [] };
+  let downloadDir = '';
 
-  // Elements
   const urlInput = page.querySelector('#dl-url');
   const fetchBtn = page.querySelector('#dl-fetch-btn');
   const depsStatus = page.querySelector('#dl-deps-status');
-  const startBtn = page.querySelector('#dl-start-btn');
-  const dirInput = page.querySelector('#dl-dir');
-  const browseBtn = page.querySelector('#dl-browse-btn');
-  const toastEl = page.querySelector('#dl-toast');
 
   // Init deps
   initDeps(depsStatus, urlInput, fetchBtn);
+  loadDownloadDir();
 
-  // Load saved download dir
-  loadDownloadDir(dirInput);
-
-  // Fetch metadata on click or Enter
+  // Fetch on click/Enter
   const doFetch = () => {
-    const url = urlInput.value.trim();
+    let url = urlInput.value.trim();
     if (!url) return;
-    fetchMetadata(url, metaSection, formatSection, controlsSection, page);
+    // Clean shell-escaped URLs (e.g. from terminal paste)
+    url = url.replace(/\\([?=&#])/g, '$1');
+    urlInput.value = url;
+    currentURL = url;
+    currentMeta = null;
+    selectedFormat = null;
+    fetchAndShow(url);
   };
   fetchBtn.addEventListener('click', doFetch);
-  urlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') doFetch();
-  });
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doFetch(); });
 
-  // Browse directory
-  browseBtn.addEventListener('click', async () => {
-    try {
-      const dir = await API.selectDownloadDir();
-      if (dir) dirInput.value = dir;
-    } catch (err) {
-      console.error('Browse dir failed:', err);
-    }
-  });
-
-  // Start download
-  startBtn.addEventListener('click', async () => {
-    const url = urlInput.value.trim();
-    const dir = dirInput.value.trim();
-    if (!url || !selectedFormat) return;
-
-    startBtn.disabled = true;
-    startBtn.textContent = 'Starting...';
-    try {
-      await API.startDownload(url, selectedFormat, dir, audioOnly, audioFormat);
-      startBtn.textContent = 'Download Started';
-
-      // Show toast notification
-      toastEl.style.display = 'block';
-      toastEl.innerHTML = `Download started! <a href="#/yaria/downloads" class="toast-link">View Downloads</a>`;
-      setTimeout(() => {
-        toastEl.style.display = 'none';
-      }, 8000);
-
-      setTimeout(() => {
-        startBtn.textContent = 'Download';
-        startBtn.disabled = false;
-      }, 2000);
-    } catch (err) {
-      startBtn.textContent = 'Download';
-      startBtn.disabled = false;
-      alert('Download failed: ' + err.message);
-    }
-  });
-
-  // Subscribe to Wails events
+  // Subscribe to events
   if (window.runtime && window.runtime.EventsOn) {
-    const offDepsReady = window.runtime.EventsOn('deps-ready', () => {
+    const offReady = window.runtime.EventsOn('deps-ready', () => {
       _yariaHomeDepsReady = true;
       depsStatus.style.display = 'none';
       urlInput.disabled = false;
       fetchBtn.disabled = false;
     });
-    _yariaHomeEventCleanups.push(offDepsReady);
+    _yariaHomeEventCleanups.push(offReady);
+
+    const offProgress = window.runtime.EventsOn('deps-progress', (data) => {
+      if (data && data.message && depsStatus) {
+        depsStatus.innerHTML = `
+          <div class="spinner" style="width:18px;height:18px;border-width:2px;margin-bottom:0;display:inline-block;vertical-align:middle;"></div>
+          <span style="margin-left:8px;color:var(--text-muted);font-size:13px;">${esc(data.message)}</span>`;
+      }
+    });
+    _yariaHomeEventCleanups.push(offProgress);
+
+    const offError = window.runtime.EventsOn('deps-error', (data) => {
+      if (depsStatus) {
+        depsStatus.innerHTML = `<span style="color:var(--red);font-size:13px;">Setup failed: ${esc(data.error||'')}</span>
+          <button class="btn btn-ghost btn-sm" id="retry-deps" style="margin-left:8px;">Retry</button>`;
+        const r = depsStatus.querySelector('#retry-deps');
+        if (r) r.addEventListener('click', () => initDeps(depsStatus, urlInput, fetchBtn));
+      }
+    });
+    _yariaHomeEventCleanups.push(offError);
+
+    // Download progress -- update inline progress items
+    const offDlProgress = window.runtime.EventsOn('download-progress', (data) => {
+      updateActiveDownload(data);
+    });
+    _yariaHomeEventCleanups.push(offDlProgress);
   }
 
-  // Focus URL input
+  // Downloads are managed in the Downloads page
+
   setTimeout(() => urlInput.focus(), 100);
 
-  // --- Inner functions ---
+  // ---- Inner functions ----
 
   async function initDeps(statusEl, inputEl, btnEl) {
     inputEl.disabled = true;
     btnEl.disabled = true;
     try {
-      // Check if deps are already available
       const check = await API.checkDeps();
       if (check && check.ready) {
         _yariaHomeDepsReady = true;
@@ -169,8 +128,7 @@ async function renderYariaHome(container) {
         btnEl.disabled = false;
         return;
       }
-    } catch (e) { /* proceed to init */ }
-
+    } catch (e) {}
     try {
       await API.initDeps();
       _yariaHomeDepsReady = true;
@@ -178,180 +136,268 @@ async function renderYariaHome(container) {
       inputEl.disabled = false;
       btnEl.disabled = false;
     } catch (err) {
-      statusEl.innerHTML = `<span style="color:var(--red);font-size:13px;">Failed to initialize download tools: ${esc(err.message)}</span>`;
+      statusEl.innerHTML = `<span style="color:var(--red);font-size:13px;">Failed: ${esc(err.message)}</span>`;
     }
   }
 
-  async function loadDownloadDir(inputEl) {
-    try {
-      const dir = await API.getDownloadDir();
-      if (dir) inputEl.value = dir;
-    } catch (e) { /* ignore */ }
+  async function loadDownloadDir() {
+    try { downloadDir = await API.getDownloadDir() || ''; } catch(e) {}
   }
 
-  async function fetchMetadata(url, metaEl, formatEl, controlsEl, pageEl) {
-    metaEl.style.display = 'block';
-    metaEl.innerHTML = '<div class="loading-screen" style="height:auto;padding:24px;"><div class="spinner"></div><p>Fetching video info...</p></div>';
-    formatEl.style.display = 'none';
-    controlsEl.style.display = 'none';
-    currentMeta = null;
-    selectedFormat = null;
+  async function fetchAndShow(url) {
+    const content = document.getElementById('dl-content');
+    content.innerHTML = `<div class="dl-card">
+      <div class="dl-card-loading"><div class="spinner" style="margin:0 auto 12px;"></div><p style="color:var(--text-muted);font-size:13px;text-align:center;">Fetching video info...</p></div>
+    </div>`;
 
     try {
       const meta = await API.fetchMetadata(url);
       currentMeta = meta;
 
-      let metaHTML = `<div class="download-meta-card">`;
-      metaHTML += `<div class="download-meta-info">`;
-      metaHTML += `<h3 class="download-meta-title">${esc(meta.title || 'Unknown Title')}</h3>`;
-      if (meta.playlist && meta.playlist_count > 0) {
-        metaHTML += `<div class="download-meta-playlist">Playlist: ${esc(meta.playlist)} (${meta.playlist_count} videos)</div>`;
-      }
-      if (meta.duration) {
-        const mins = Math.floor(meta.duration / 60);
-        const secs = meta.duration % 60;
-        metaHTML += `<div class="download-meta-duration">Duration: ${mins}:${String(secs).padStart(2, '0')}</div>`;
-      }
-      if (meta.uploader) {
-        metaHTML += `<div class="download-meta-uploader">By: ${esc(meta.uploader)}</div>`;
-      }
-      metaHTML += `</div>`;
+      // Build the unified card: thumbnail + info + formats + download button
+      let html = `<div class="dl-card">`;
+
+      // Top row: thumbnail + title
+      html += `<div class="dl-card-header">`;
       if (meta.thumbnail) {
-        metaHTML += `<img class="download-meta-thumb" src="${esc(meta.thumbnail)}" alt="Thumbnail">`;
+        html += `<img class="dl-card-thumb" src="${esc(meta.thumbnail)}" alt="" onerror="this.style.display='none'">`;
       }
-      metaHTML += `</div>`;
-      metaEl.innerHTML = metaHTML;
-
-      // Now fetch formats
-      loadFormats(url, formatEl, controlsEl, pageEl);
-    } catch (err) {
-      metaEl.innerHTML = `<div class="no-results" style="padding:20px;">Failed to fetch metadata: ${esc(err.message)}</div>`;
-    }
-  }
-
-  async function loadFormats(url, formatEl, controlsEl, pageEl) {
-    formatEl.style.display = 'block';
-    formatEl.innerHTML = '<div class="loading-screen" style="height:auto;padding:20px;"><div class="spinner"></div><p>Loading formats...</p></div>';
-
-    try {
-      const result = await API.listFormats(url);
-      formats.video = (result.video || []);
-      formats.audio = (result.audio || []);
-      renderFormats(formatEl, controlsEl, pageEl);
-    } catch (err) {
-      formatEl.innerHTML = `<div class="no-results" style="padding:20px;">Failed to load formats: ${esc(err.message)}</div>`;
-    }
-  }
-
-  function renderFormats(formatEl, controlsEl, pageEl) {
-    let html = `<div class="format-header">
-      <h3 class="format-section-title">Select Format</h3>
-      <div class="audio-toggle-wrap">
-        <label class="audio-toggle">
-          <input type="checkbox" id="dl-audio-toggle" ${audioOnly ? 'checked' : ''}>
-          <span class="audio-toggle-slider"></span>
-        </label>
-        <span class="audio-toggle-label">Audio Only</span>
-      </div>
-    </div>`;
-
-    if (audioOnly) {
-      // Audio format selector
-      html += `<div class="audio-format-selector">
-        <label class="setting-label" style="margin-bottom:8px;">Audio Format</label>
-        <div class="format-grid">`;
-      const audioFormats = ['mp3', 'm4a', 'opus', 'wav', 'flac'];
-      audioFormats.forEach(fmt => {
-        const sel = audioFormat === fmt ? ' selected' : '';
-        html += `<div class="format-card audio-fmt-card${sel}" data-audio-fmt="${fmt}">
-          <div class="format-card-label">${fmt.toUpperCase()}</div>
-        </div>`;
-      });
+      html += `<div class="dl-card-info">
+        <h3 class="dl-card-title">${esc(meta.title || 'Unknown Title')}</h3>`;
+      if (meta.uploader) html += `<p class="dl-card-uploader">${esc(meta.uploader)}</p>`;
+      if (meta.duration) {
+        const m = Math.floor(meta.duration / 60), s = meta.duration % 60;
+        html += `<p class="dl-card-duration">${m}:${String(s).padStart(2, '0')}</p>`;
+      }
       html += `</div></div>`;
 
-      // Also show available audio streams if any
-      if (formats.audio.length > 0) {
-        html += `<div class="format-grid" style="margin-top:12px;">`;
-        formats.audio.forEach((f, i) => {
-          const sel = selectedFormat === (f.resolution || f.format_id || `audio-${i}`) ? ' selected' : '';
-          html += `<div class="format-card${sel}" data-format="${esc(f.resolution || f.format_id || 'audio-' + i)}">
-            <div class="format-card-label">${esc(f.resolution || f.format_note || 'Audio')}</div>
-            <div class="format-card-ext">${esc(f.ext || '')}</div>
-            ${f.filesize ? `<div class="format-card-size">${formatFilesize(f.filesize)}</div>` : ''}
-          </div>`;
+      // Format selection inline
+      html += `<div class="dl-card-formats">
+        <div class="format-header">
+          <span class="format-section-title" style="font-size:13px;">Quality</span>
+          <div class="audio-toggle-wrap">
+            <label class="audio-toggle"><input type="checkbox" id="dl-audio-toggle" ${audioOnly ? 'checked' : ''}><span class="audio-toggle-slider"></span></label>
+            <span class="audio-toggle-label">Audio Only</span>
+          </div>
+        </div>
+        <div class="format-grid" id="dl-format-grid"></div>
+      </div>`;
+
+      // Download dir + button
+      html += `<div class="dl-card-actions">
+        <div class="dl-card-dir">
+          <input type="text" class="setting-input dir-input" id="dl-dir" value="${esc(downloadDir)}" readonly placeholder="Download directory">
+          <button class="btn btn-ghost btn-sm" id="dl-browse-btn">Browse</button>
+        </div>
+        <button class="btn btn-primary" id="dl-start-btn" style="padding:12px 48px;font-size:14px;align-self:center;">Download</button>
+      </div>`;
+
+      html += `</div>`;
+      content.innerHTML = html;
+
+      // Render format options
+      renderFormatGrid();
+
+      // Bind audio toggle
+      const audioToggle = content.querySelector('#dl-audio-toggle');
+      if (audioToggle) {
+        audioToggle.addEventListener('change', (e) => {
+          audioOnly = e.target.checked;
+          selectedFormat = null;
+          renderFormatGrid();
         });
-        html += `</div>`;
       }
+
+      // Browse dir
+      const browseBtn = content.querySelector('#dl-browse-btn');
+      if (browseBtn) {
+        browseBtn.addEventListener('click', async () => {
+          try {
+            const dir = await API.selectDownloadDir();
+            if (dir) {
+              downloadDir = dir;
+              const inp = content.querySelector('#dl-dir');
+              if (inp) inp.value = dir;
+            }
+          } catch(e) {}
+        });
+      }
+
+      // Start download
+      const startBtn = content.querySelector('#dl-start-btn');
+      startBtn.addEventListener('click', () => startDownload(url, startBtn));
+
+      // Fetch formats in background
+      loadFormats(url);
+
+    } catch (err) {
+      content.innerHTML = `<div class="dl-card"><div class="no-results" style="padding:20px;">Failed: ${esc(err.message)}</div></div>`;
+    }
+  }
+
+  function renderFormatGrid() {
+    const grid = document.getElementById('dl-format-grid');
+    if (!grid) return;
+    let html = '';
+
+    if (audioOnly) {
+      const fmts = ['mp3', 'm4a', 'opus', 'wav', 'flac'];
+      if (!selectedFormat) { selectedFormat = 'mp3'; audioFormat = 'mp3'; }
+      fmts.forEach(f => {
+        const sel = audioFormat === f ? ' selected' : '';
+        html += `<div class="format-card audio-fmt-card${sel}" data-audio-fmt="${f}"><div class="format-card-label">${f.toUpperCase()}</div></div>`;
+      });
     } else {
-      // Video format cards
-      html += `<div class="format-grid">`;
       if (formats.video.length > 0) {
-        // Auto-select best format: prefer 1080p, fallback to highest
         if (!selectedFormat) {
-          const preferred = formats.video.find(f => f.resolution === '1080p');
-          if (preferred) selectedFormat = preferred.resolution || preferred.format_id;
-          else selectedFormat = formats.video[0].resolution || formats.video[0].format_id || 'video-0';
-          updateStartBtn();
+          const p = formats.video.find(f => f.resolution === '1080p');
+          selectedFormat = p ? (p.resolution || p.format_id) : (formats.video[0].resolution || formats.video[0].format_id || 'video-0');
         }
         formats.video.forEach((f, i) => {
-          const label = f.resolution || f.format_note || f.format_id || `Format ${i + 1}`;
-          const fmtKey = f.resolution || f.format_id || `video-${i}`;
-          const sel = selectedFormat === fmtKey ? ' selected' : '';
-          html += `<div class="format-card${sel}" data-format="${esc(fmtKey)}">
-            <div class="format-card-label">${esc(label)}</div>
-            <div class="format-card-ext">${esc(f.ext || '')}</div>
-            ${f.filesize ? `<div class="format-card-size">${formatFilesize(f.filesize)}</div>` : ''}
+          const key = f.resolution || f.format_id || `video-${i}`;
+          const sel = selectedFormat === key ? ' selected' : '';
+          html += `<div class="format-card${sel}" data-format="${esc(key)}">
+            <div class="format-card-label">${esc(f.resolution || f.format_note || key)}</div>
+            ${f.ext ? `<div class="format-card-ext">${esc(f.ext)}</div>` : ''}
           </div>`;
         });
       } else {
-        // No formats from yt-dlp, provide default resolution options
-        if (!selectedFormat) { selectedFormat = '1080p'; updateStartBtn(); }
+        if (!selectedFormat) selectedFormat = '1080p';
         ['2160p', '1440p', '1080p', '720p', '480p', '360p'].forEach(res => {
           const sel = selectedFormat === res ? ' selected' : '';
-          html += `<div class="format-card${sel}" data-format="${res}">
-            <div class="format-card-label">${res}</div>
-          </div>`;
+          html += `<div class="format-card${sel}" data-format="${res}"><div class="format-card-label">${res}</div></div>`;
         });
       }
-      html += `</div>`;
     }
 
-    formatEl.innerHTML = html;
-    controlsEl.style.display = 'block';
+    grid.innerHTML = html;
 
-    // Bind audio toggle
-    const audioToggle = formatEl.querySelector('#dl-audio-toggle');
-    if (audioToggle) {
-      audioToggle.addEventListener('change', (e) => {
-        audioOnly = e.target.checked;
-        selectedFormat = null;
-        updateStartBtn();
-        renderFormats(formatEl, controlsEl, pageEl);
-      });
-    }
-
-    // Bind audio format cards
-    formatEl.querySelectorAll('.audio-fmt-card').forEach(card => {
+    // Bind clicks
+    grid.querySelectorAll('.audio-fmt-card').forEach(card => {
       card.addEventListener('click', () => {
-        formatEl.querySelectorAll('.audio-fmt-card').forEach(c => c.classList.remove('selected'));
+        grid.querySelectorAll('.audio-fmt-card').forEach(c => c.classList.remove('selected'));
         card.classList.add('selected');
         audioFormat = card.dataset.audioFmt;
+        selectedFormat = audioFormat;
       });
     });
-
-    // Bind format cards
-    formatEl.querySelectorAll('.format-card:not(.audio-fmt-card)').forEach(card => {
+    grid.querySelectorAll('.format-card:not(.audio-fmt-card)').forEach(card => {
       card.addEventListener('click', () => {
-        formatEl.querySelectorAll('.format-card:not(.audio-fmt-card)').forEach(c => c.classList.remove('selected'));
+        grid.querySelectorAll('.format-card:not(.audio-fmt-card)').forEach(c => c.classList.remove('selected'));
         card.classList.add('selected');
         selectedFormat = card.dataset.format;
-        updateStartBtn();
       });
     });
   }
 
-  function updateStartBtn() {
-    startBtn.disabled = !selectedFormat;
+  async function loadFormats(url) {
+    try {
+      const result = await API.listFormats(url);
+      formats.video = result.video || [];
+      formats.audio = result.audio || [];
+      renderFormatGrid();
+    } catch(e) {}
+  }
+
+  async function startDownload(url, btn) {
+    if (!selectedFormat) return;
+    btn.disabled = true;
+    btn.textContent = 'Starting...';
+
+    try {
+      const result = await API.startDownload(url, selectedFormat, downloadDir, audioOnly, audioFormat);
+      const dlId = result.id;
+
+      // Replace the card content with inline progress
+      const content = document.getElementById('dl-content');
+      const title = currentMeta ? currentMeta.title : url;
+      const thumb = currentMeta ? currentMeta.thumbnail : '';
+
+      content.innerHTML = `<div class="dl-card">
+        <div class="dl-card-header">
+          ${thumb ? `<img class="dl-card-thumb" src="${esc(thumb)}" alt="" onerror="this.style.display='none'">` : ''}
+          <div class="dl-card-info">
+            <h3 class="dl-card-title">${esc(title)}</h3>
+            <div class="dl-inline-progress">
+              <div class="dl-inline-status">
+                <span class="download-status status-downloading" id="ip-status-${esc(dlId)}">DOWNLOADING</span>
+                <span class="dl-inline-pct" id="ip-pct-${esc(dlId)}">0%</span>
+                <span class="dl-inline-speed" id="ip-speed-${esc(dlId)}"></span>
+                <span class="dl-inline-eta" id="ip-eta-${esc(dlId)}"></span>
+              </div>
+              <div class="download-progress-bar"><div class="download-progress-fill" id="ip-bar-${esc(dlId)}" style="width:0%"></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="dl-card-actions" style="justify-content:space-between;align-items:center;">
+          <span class="dl-inline-msg" id="ip-msg-${esc(dlId)}" style="font-size:12px;color:var(--text-muted);"></span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" id="ip-cancel-${esc(dlId)}">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="ip-new">Download Another</button>
+          </div>
+        </div>
+      </div>`;
+
+      // Cancel button
+      const cancelBtn = content.querySelector(`#ip-cancel-${dlId}`);
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', async () => {
+          await API.cancelDownload(dlId);
+          cancelBtn.textContent = 'Cancelled';
+          cancelBtn.disabled = true;
+        });
+      }
+
+      // Download Another button -- reset the page for a new URL
+      const newBtn = content.querySelector('#ip-new');
+      if (newBtn) {
+        newBtn.addEventListener('click', () => {
+          currentMeta = null;
+          selectedFormat = null;
+          formats = { video: [], audio: [] };
+          content.innerHTML = '';
+          urlInput.value = '';
+          urlInput.focus();
+          refreshActiveDownloads();
+        });
+      }
+
+    } catch (err) {
+      btn.textContent = 'Download';
+      btn.disabled = false;
+    }
+  }
+
+  // Update inline progress for a specific download
+  function updateActiveDownload(data) {
+    if (!data || !data.id) return;
+
+    // Update inline progress card if visible
+    const bar = document.getElementById(`ip-bar-${data.id}`);
+    const pct = document.getElementById(`ip-pct-${data.id}`);
+    const speed = document.getElementById(`ip-speed-${data.id}`);
+    const eta = document.getElementById(`ip-eta-${data.id}`);
+    const status = document.getElementById(`ip-status-${data.id}`);
+    const msg = document.getElementById(`ip-msg-${data.id}`);
+
+    if (bar && data.percent != null) bar.style.width = Math.min(data.percent, 100) + '%';
+    if (pct && data.percent != null) pct.textContent = data.percent.toFixed(1) + '%';
+    if (speed && data.speed) speed.textContent = data.speed;
+    if (eta && data.eta) eta.textContent = 'ETA: ' + data.eta;
+    if (status && data.status) {
+      status.textContent = data.status.toUpperCase();
+      status.className = 'download-status ' + getStatusClass(data.status);
+    }
+    if (msg) {
+      if (data.status === 'complete') msg.textContent = 'Download complete!';
+      else if (data.status === 'error') { msg.textContent = data.error || 'Download failed'; msg.style.color = 'var(--red)'; }
+      else if (data.status === 'metadata') msg.textContent = 'Fetching metadata...';
+    }
+
+    // Update message on completion/error
+    if (data.status === 'complete' && msg) {
+      msg.style.color = 'var(--green)';
+    }
   }
 
   function formatFilesize(bytes) {
@@ -364,10 +410,7 @@ async function renderYariaHome(container) {
 }
 
 function cleanupYariaHome() {
-  // Remove Wails event listeners
-  _yariaHomeEventCleanups.forEach(fn => {
-    if (typeof fn === 'function') fn();
-  });
+  _yariaHomeEventCleanups.forEach(fn => { if (typeof fn === 'function') fn(); });
   _yariaHomeEventCleanups = [];
   _yariaHomeDepsReady = false;
 }

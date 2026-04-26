@@ -4,15 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"yaria/pkg/yaria/config"
@@ -22,15 +24,17 @@ import (
 
 // activeDownload tracks the state of a single download.
 type activeDownload struct {
-	ID      string
-	URL     string
-	Title   string
-	Status  string // "queued", "metadata", "downloading", "complete", "error", "cancelled"
-	Percent float64
-	Speed   string
-	ETA     string
-	Error   string
-	cancel  context.CancelFunc
+	ID        string
+	URL       string
+	Title     string
+	Thumbnail string
+	Status    string // "queued", "metadata", "downloading", "complete", "error", "cancelled"
+	Percent   float64
+	Speed     string
+	ETA       string
+	Error     string
+	StartedAt string
+	cancel    context.CancelFunc
 }
 
 // DownloadService provides video download methods to the frontend via Wails bindings.
@@ -59,10 +63,35 @@ func (d *DownloadService) startup(ctx context.Context) {
 
 // InitDeps initializes the downloader (auto-install yt-dlp, aria2c, etc.).
 // Heavy work runs in a goroutine; returns immediately.
-// Emits "deps-error" on failure or "deps-ready" on success.
+// Emits "deps-progress" events with each line of output from the installer,
+// then "deps-error" on failure or "deps-ready" on success.
 func (d *DownloadService) InitDeps() map[string]interface{} {
 	go func() {
+		// Capture installer output and emit as UI events
+		pr, pw := io.Pipe()
+		d.cfg.Stdout = pw
+		d.cfg.Stderr = pw
+
+		// Read output lines and emit to frontend
+		go func() {
+			scanner := bufio.NewScanner(pr)
+			for scanner.Scan() {
+				line := scanner.Text()
+				if line != "" {
+					wailsRuntime.EventsEmit(d.ctx, "deps-progress", map[string]interface{}{
+						"message": line,
+					})
+				}
+			}
+		}()
+
 		dl, err := downloader.New(d.cfg)
+		pw.Close()
+
+		// Reset stdout/stderr so downloads use their own pipe
+		d.cfg.Stdout = nil
+		d.cfg.Stderr = nil
+
 		if err != nil {
 			wailsRuntime.EventsEmit(d.ctx, "deps-error", map[string]interface{}{
 				"error": err.Error(),
@@ -95,66 +124,134 @@ func (d *DownloadService) CheckDeps() []map[string]interface{} {
 	return result
 }
 
+// cleanURL removes shell escape characters from pasted URLs.
+func cleanURL(url string) string {
+	url = strings.TrimSpace(url)
+	url = strings.ReplaceAll(url, "\\?", "?")
+	url = strings.ReplaceAll(url, "\\=", "=")
+	url = strings.ReplaceAll(url, "\\&", "&")
+	url = strings.ReplaceAll(url, "\\#", "#")
+	return url
+}
+
 // FetchMetadata gets video title, thumbnail, and playlist info for a URL.
-func (d *DownloadService) FetchMetadata(url string) map[string]interface{} {
-	if d.dl == nil {
-		return map[string]interface{}{"error": "downloader not initialized"}
+// Falls back to OEmbed/noembed API if yt-dlp fails (e.g. bot detection).
+func (d *DownloadService) FetchMetadata(rawURL string) map[string]interface{} {
+	url := cleanURL(rawURL)
+
+	// Try yt-dlp first (if initialized)
+	if d.dl != nil {
+		playlistInfo, title, err := d.dl.GetMetadata([]string{url})
+		if err == nil && title != "" {
+			result := map[string]interface{}{"title": title}
+			if playlistInfo != "" {
+				parts := strings.Split(playlistInfo, "&")
+				if len(parts) >= 3 {
+					result["playlist_id"] = parts[0]
+					result["playlist_title"] = parts[1]
+					result["playlist_count"] = parts[2]
+				}
+			}
+			thumb := d.getThumbnailURL(url)
+			if thumb != "" {
+				result["thumbnail"] = thumb
+			}
+			return result
+		}
+		// yt-dlp failed -- fall through to fallback
 	}
-	playlistInfo, title, err := d.dl.GetMetadata([]string{url})
+
+	// Fallback: use noembed.com (free OEmbed proxy, no auth needed)
+	result := d.fetchMetadataFallback(url)
+	if result != nil {
+		return result
+	}
+
+	// Last resort: return URL-derived info
+	thumb := d.getThumbnailURL(url)
+	r := map[string]interface{}{
+		"title": url,
+	}
+	if thumb != "" {
+		r["thumbnail"] = thumb
+	}
+	return r
+}
+
+// fetchMetadataFallback uses noembed.com to get video title/thumbnail
+// without needing cookies or authentication.
+func (d *DownloadService) fetchMetadataFallback(videoURL string) map[string]interface{} {
+	apiURL := "https://noembed.com/embed?url=" + videoURL
+	resp, err := http.Get(apiURL)
 	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
+		return nil
 	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil
+	}
+
+	title, _ := data["title"].(string)
+	thumb, _ := data["thumbnail_url"].(string)
+	author, _ := data["author_name"].(string)
+
+	if title == "" {
+		return nil
+	}
+
 	result := map[string]interface{}{
 		"title": title,
 	}
-	if playlistInfo != "" {
-		parts := strings.Split(playlistInfo, "&")
-		if len(parts) >= 3 {
-			result["playlist_id"] = parts[0]
-			result["playlist_title"] = parts[1]
-			result["playlist_count"] = parts[2]
-		}
-	}
-
-	// Try to get thumbnail URL via yt-dlp --print
-	thumb := d.getThumbnailURL(url)
 	if thumb != "" {
 		result["thumbnail"] = thumb
 	}
-
+	if author != "" {
+		result["uploader"] = author
+	}
 	return result
 }
 
-// getThumbnailURL fetches the thumbnail URL without downloading the image.
+// getThumbnailURL returns a thumbnail URL for a video.
+// For YouTube, constructs it directly (no yt-dlp call needed).
+// For other sites, returns empty (not critical).
 func (d *DownloadService) getThumbnailURL(url string) string {
-	if d.dl == nil {
-		return ""
+	// YouTube: extract video ID and construct thumbnail URL directly
+	if strings.Contains(url, "youtube.com/watch") || strings.Contains(url, "youtu.be/") {
+		videoID := ""
+		if strings.Contains(url, "v=") {
+			parts := strings.SplitN(url, "v=", 2)
+			if len(parts) == 2 {
+				videoID = strings.SplitN(parts[1], "&", 2)[0]
+			}
+		} else if strings.Contains(url, "youtu.be/") {
+			parts := strings.SplitN(url, "youtu.be/", 2)
+			if len(parts) == 2 {
+				videoID = strings.SplitN(parts[1], "?", 2)[0]
+			}
+		}
+		if videoID != "" {
+			return "https://i.ytimg.com/vi/" + videoID + "/hqdefault.jpg"
+		}
 	}
-	ytDlp := "yt-dlp"
-	args := []string{
-		"--print", "%(thumbnail)s",
-		"--no-warnings",
-		"--no-playlist",
-		url,
-	}
-	cmd := exec.Command(ytDlp, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	thumb := strings.TrimSpace(string(out))
-	if thumb == "NA" || thumb == "" {
-		return ""
-	}
-	return thumb
+	return ""
 }
 
 // ListFormats lists available video formats/resolutions for a URL.
 // Returns {video: [...], audio: [...]} separated by type.
-func (d *DownloadService) ListFormats(url string) map[string]interface{} {
+func (d *DownloadService) ListFormats(rawURL string) map[string]interface{} {
 	if d.dl == nil {
 		return map[string]interface{}{"error": "downloader not initialized"}
 	}
+	url := cleanURL(rawURL)
 	formats, err := d.dl.GetFormats(url)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -189,22 +286,26 @@ func (d *DownloadService) ListFormats(url string) map[string]interface{} {
 
 // StartDownload begins a download in a goroutine and emits progress events.
 // Returns immediately with the download ID.
-func (d *DownloadService) StartDownload(url, resolution, downloadDir string, audioOnly bool, audioFormat string) map[string]interface{} {
+func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, audioOnly bool, audioFormat string) map[string]interface{} {
 	if d.dl == nil {
 		return map[string]interface{}{"error": "downloader not initialized"}
 	}
+	url := cleanURL(rawURL)
 
 	d.mu.Lock()
 	d.nextID++
 	id := fmt.Sprintf("dl_%d", d.nextID)
 
 	dlCtx, cancel := context.WithCancel(d.ctx)
+	thumb := d.getThumbnailURL(url)
 	ad := &activeDownload{
-		ID:     id,
-		URL:    url,
-		Title:  url, // updated with actual title after metadata fetch
-		Status: "queued",
-		cancel: cancel,
+		ID:        id,
+		URL:       url,
+		Title:     url,
+		Thumbnail: thumb,
+		Status:    "queued",
+		StartedAt: time.Now().Format("2006-01-02 15:04"),
+		cancel:    cancel,
 	}
 	d.downloads[id] = ad
 	d.mu.Unlock()
@@ -324,14 +425,16 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(d.downloads))
 	for _, ad := range d.downloads {
 		result = append(result, map[string]interface{}{
-			"id":      ad.ID,
-			"url":     ad.URL,
-			"title":   ad.Title,
-			"status":  ad.Status,
-			"percent": ad.Percent,
-			"speed":   ad.Speed,
-			"eta":     ad.ETA,
-			"error":   ad.Error,
+			"id":         ad.ID,
+			"url":        ad.URL,
+			"title":      ad.Title,
+			"thumbnail":  ad.Thumbnail,
+			"status":     ad.Status,
+			"percent":    ad.Percent,
+			"speed":      ad.Speed,
+			"eta":        ad.ETA,
+			"error":      ad.Error,
+			"started_at": ad.StartedAt,
 		})
 	}
 	return result

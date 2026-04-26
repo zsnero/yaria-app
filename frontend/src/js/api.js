@@ -60,6 +60,33 @@ const API = {
     return window.go.main.LicenseService.IsPro();
   },
 
+  // App Dependencies
+  async checkAppDeps() {
+    return window.go.main.DepsService.CheckDeps();
+  },
+  async installFFmpeg() {
+    return window.go.main.DepsService.InstallFFmpeg();
+  },
+  async ffmpegPath() {
+    return window.go.main.DepsService.FFmpegPath();
+  },
+
+  // Codecs
+  async checkCodecs() {
+    return window.go.main.CodecService.CheckCodecs();
+  },
+  async installCodecs() {
+    return window.go.main.CodecService.InstallCodecs();
+  },
+
+  // Player (mpv/vlc fallback)
+  async detectPlayers() {
+    return window.go.main.PlayerService.DetectPlayers();
+  },
+  async launchPlayer(streamURL, playerName, title) {
+    return window.go.main.PlayerService.LaunchPlayer(streamURL, playerName || '', title || '');
+  },
+
   // --- Pro methods (Mantorex) ---
   // These call stub services in free builds (return errors).
   // Real implementations are compiled in pro builds.
@@ -92,6 +119,22 @@ const API = {
   },
   async updateProgress(id, progress) {
     return window.go.main.LibraryService.UpdateProgress(id, progress);
+  },
+  async findInLibrary(tmdbId, mediaType) {
+    if (tmdbId) return window.go.main.LibraryService.FindByTMDBID(tmdbId, mediaType || '');
+    return null;
+  },
+  async findInLibraryByTitle(title, mediaType, year) {
+    return window.go.main.LibraryService.FindByTitle(title || '', mediaType || '', year || '');
+  },
+  async updateEpisodeProgress(id, season, episode, title, timeSeconds, durationSeconds) {
+    return window.go.main.LibraryService.UpdateEpisodeProgress(id, season, episode, title || '', timeSeconds || 0, durationSeconds || 0);
+  },
+  async markEpisodeWatched(id, season, episode) {
+    return window.go.main.LibraryService.MarkEpisodeWatched(id, season, episode);
+  },
+  async setLastKnownEpisode(id, season, episode, airDate) {
+    return window.go.main.LibraryService.SetLastKnownEpisode(id, season, episode, airDate || '');
   },
   async tmdbSearch(q, page) {
     return window.go.main.TMDBService.SearchMulti(q, page || 1);

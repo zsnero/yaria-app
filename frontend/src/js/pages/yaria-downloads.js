@@ -1,4 +1,4 @@
-// Yaria Downloads Page - manages active and completed downloads
+// Yaria Downloads Page - active and completed downloads with progress
 let _yariaDownloadsCleanups = [];
 let _yariaDownloadsInterval = null;
 
@@ -8,182 +8,155 @@ function renderYariaDownloads(container) {
   const page = document.createElement('div');
   page.className = 'yaria-downloads-page';
 
-  const header = document.createElement('div');
-  header.className = 'yaria-downloads-header';
-  header.innerHTML = `
-    <h2 class="section-heading">Downloads</h2>
-    <p class="section-subtitle">Manage your video downloads</p>
+  page.innerHTML = `
+    <div class="yaria-downloads-header">
+      <div>
+        <h2 class="section-heading">Downloads</h2>
+        <p class="section-subtitle">Manage your video downloads</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="yd-clear-all" style="color:var(--text-muted);">Clear Completed</button>
+    </div>
+    <div id="yd-active-section"></div>
+    <div id="yd-completed-section"></div>
+    <div id="yd-empty" class="no-results" style="padding:48px 0;display:none;">No downloads yet. Go to the Yaria tab to start downloading.</div>
   `;
-  page.appendChild(header);
-
-  const listEl = document.createElement('div');
-  listEl.className = 'downloads-list';
-  listEl.id = 'yd-list';
-  listEl.innerHTML = '<div class="no-results" style="padding:32px 0;">No downloads yet</div>';
-  page.appendChild(listEl);
 
   container.appendChild(page);
 
-  // Subscribe to Wails events for real-time progress
+  // Clear completed button
+  page.querySelector('#yd-clear-all').addEventListener('click', async () => {
+    try {
+      const downloads = await API.getDownloads();
+      const arr = Array.isArray(downloads) ? downloads : [];
+      for (const dl of arr) {
+        if (dl.status === 'complete' || dl.status === 'error' || dl.status === 'cancelled') {
+          await API.removeDownload(dl.id);
+        }
+      }
+      refreshDownloadList();
+    } catch(e) {}
+  });
+
+  // Subscribe to progress events
   if (window.runtime && window.runtime.EventsOn) {
     const off = window.runtime.EventsOn('download-progress', (data) => {
-      updateDownloadItemUI(data, listEl);
+      updateDownloadItemUI(data);
     });
     _yariaDownloadsCleanups.push(off);
   }
 
-  // Refresh list immediately + periodically
-  refreshDownloadList(listEl);
-  _yariaDownloadsInterval = setInterval(() => {
-    refreshDownloadList(listEl);
-  }, 3000);
+  refreshDownloadList();
+  _yariaDownloadsInterval = setInterval(refreshDownloadList, 3000);
 }
 
 function cleanupYariaDownloads() {
-  // Remove Wails event listeners
-  _yariaDownloadsCleanups.forEach(fn => {
-    if (typeof fn === 'function') fn();
-  });
+  _yariaDownloadsCleanups.forEach(fn => { if (typeof fn === 'function') fn(); });
   _yariaDownloadsCleanups = [];
-
-  // Clear refresh interval
-  if (_yariaDownloadsInterval) {
-    clearInterval(_yariaDownloadsInterval);
-    _yariaDownloadsInterval = null;
-  }
+  if (_yariaDownloadsInterval) { clearInterval(_yariaDownloadsInterval); _yariaDownloadsInterval = null; }
 }
 
-// --- Shared download list functions (used by both yaria-home.js and yaria-downloads.js) ---
+async function refreshDownloadList() {
+  const activeSection = document.getElementById('yd-active-section');
+  const completedSection = document.getElementById('yd-completed-section');
+  const emptyEl = document.getElementById('yd-empty');
+  if (!activeSection || !completedSection) return;
 
-async function refreshDownloadList(listEl) {
-  if (!listEl) return;
   try {
-    const data = await API.getDownloads();
-    const downloads = data.downloads || data || [];
-    if (!Array.isArray(downloads) || downloads.length === 0) {
-      listEl.innerHTML = '<div class="no-results" style="padding:32px 0;">No downloads yet</div>';
+    const downloads = await API.getDownloads();
+    const arr = Array.isArray(downloads) ? downloads : [];
+
+    if (arr.length === 0) {
+      activeSection.innerHTML = '';
+      completedSection.innerHTML = '';
+      if (emptyEl) emptyEl.style.display = 'block';
       return;
     }
-    renderDownloadList(listEl, downloads);
-  } catch (e) {
-    // Silently fail on refresh
-  }
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    const active = arr.filter(d => d.status === 'downloading' || d.status === 'queued' || d.status === 'metadata');
+    const completed = arr.filter(d => d.status === 'complete' || d.status === 'error' || d.status === 'cancelled');
+
+    // Active section
+    if (active.length > 0) {
+      let html = '<h3 class="yd-section-title">Active</h3>';
+      active.forEach(dl => { html += renderDownloadItem(dl, true); });
+      activeSection.innerHTML = html;
+      bindButtons(activeSection);
+    } else {
+      activeSection.innerHTML = '';
+    }
+
+    // Completed section
+    if (completed.length > 0) {
+      let html = '<h3 class="yd-section-title" style="margin-top:24px;">History</h3>';
+      completed.forEach(dl => { html += renderDownloadItem(dl, false); });
+      completedSection.innerHTML = html;
+      bindButtons(completedSection);
+    } else {
+      completedSection.innerHTML = '';
+    }
+  } catch(e) {}
 }
 
-function renderDownloadList(listEl, downloads) {
-  let html = '';
-  downloads.forEach(dl => {
-    const statusClass = getStatusClass(dl.status);
-    const progress = dl.percent || dl.progress || 0;
-    const showProgress = dl.status === 'downloading' || dl.status === 'queued' || dl.status === 'metadata';
-    const showCancel = dl.status === 'downloading' || dl.status === 'queued' || dl.status === 'metadata';
-    const showRemove = dl.status === 'complete' || dl.status === 'error' || dl.status === 'cancelled';
+function renderDownloadItem(dl, isActive) {
+  const pct = dl.percent || 0;
+  const sc = getStatusClass(dl.status);
 
-    html += `<div class="download-item" data-id="${esc(dl.id)}">
-      <div class="download-item-info">
-        <div class="download-item-title">${esc(dl.title || dl.url || 'Download')}</div>
-        <div class="download-item-details">
-          <span class="download-status ${statusClass}">${esc(dl.status || 'unknown').toUpperCase()}</span>
-          ${progress > 0 ? `<span class="download-percent">${progress.toFixed(1)}%</span>` : ''}
-          ${dl.speed ? `<span class="download-speed">${esc(dl.speed)}</span>` : ''}
-          ${dl.eta ? `<span class="download-eta">ETA: ${esc(dl.eta)}</span>` : ''}
-        </div>
-        ${showProgress ? `<div class="download-progress-bar"><div class="download-progress-fill" style="width:${Math.min(progress, 100)}%"></div></div>` : ''}
-        ${dl.error ? `<div class="download-error-msg">${esc(dl.error)}</div>` : ''}
+  return `<div class="download-item" data-id="${esc(dl.id)}">
+    ${dl.thumbnail ? `<img class="dl-item-thumb" src="${esc(dl.thumbnail)}" alt="" onerror="this.style.display='none'">` : ''}
+    <div class="download-item-info">
+      <div class="download-item-title">${esc(dl.title || dl.url || 'Download')}</div>
+      <div class="download-item-details">
+        <span class="download-status ${sc}">${esc(dl.status || '').toUpperCase()}</span>
+        ${pct > 0 ? `<span class="dl-item-pct">${pct.toFixed(1)}%</span>` : ''}
+        ${dl.speed ? `<span class="dl-item-speed">${esc(dl.speed)}</span>` : ''}
+        ${dl.eta ? `<span class="dl-item-eta">ETA: ${esc(dl.eta)}</span>` : ''}
+        ${dl.started_at ? `<span class="dl-item-time">${esc(dl.started_at)}</span>` : ''}
       </div>
-      <div class="download-item-actions">
-        ${showCancel ? `<button class="btn btn-ghost btn-sm dl-cancel-btn" data-id="${esc(dl.id)}">Cancel</button>` : ''}
-        ${showRemove ? `<button class="btn btn-ghost btn-sm dl-remove-btn" data-id="${esc(dl.id)}">Remove</button>` : ''}
-      </div>
-    </div>`;
-  });
+      ${isActive ? `<div class="download-progress-bar"><div class="download-progress-fill" style="width:${Math.min(pct,100)}%"></div></div>` : ''}
+      ${dl.error ? `<div class="dl-item-error">${esc(dl.error)}</div>` : ''}
+    </div>
+    <div class="download-item-actions">
+      ${isActive ? `<button class="btn btn-ghost btn-sm dl-cancel-btn" data-id="${esc(dl.id)}">Cancel</button>` : ''}
+      ${!isActive ? `<button class="btn btn-ghost btn-sm dl-remove-btn" data-id="${esc(dl.id)}">Remove</button>` : ''}
+    </div>
+  </div>`;
+}
 
-  listEl.innerHTML = html;
-
-  // Bind cancel buttons
-  listEl.querySelectorAll('.dl-cancel-btn').forEach(btn => {
+function bindButtons(container) {
+  container.querySelectorAll('.dl-cancel-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      try {
-        await API.cancelDownload(btn.dataset.id);
-        refreshDownloadList(listEl);
-      } catch (e) { console.error('Cancel failed:', e); }
+      await API.cancelDownload(btn.dataset.id);
+      refreshDownloadList();
     });
   });
-
-  // Bind remove buttons
-  listEl.querySelectorAll('.dl-remove-btn').forEach(btn => {
+  container.querySelectorAll('.dl-remove-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      try {
-        await API.removeDownload(btn.dataset.id);
-        refreshDownloadList(listEl);
-      } catch (e) { console.error('Remove failed:', e); }
+      await API.removeDownload(btn.dataset.id);
+      refreshDownloadList();
     });
   });
 }
 
-function updateDownloadItemUI(data, listEl) {
-  if (!listEl || !data || !data.id) return;
-  const item = listEl.querySelector(`.download-item[data-id="${data.id}"]`);
-  if (!item) {
-    // New item -- just refresh the full list
-    refreshDownloadList(listEl);
-    return;
-  }
+function updateDownloadItemUI(data) {
+  if (!data || !data.id) return;
+  const item = document.querySelector(`.download-item[data-id="${data.id}"]`);
+  if (!item) { refreshDownloadList(); return; }
 
-  // Update progress bar
-  const fill = item.querySelector('.download-progress-fill');
-  const pct = data.percent || data.progress || 0;
-  if (fill && pct > 0) {
-    fill.style.width = Math.min(pct, 100) + '%';
-  }
+  const bar = item.querySelector('.download-progress-fill');
+  const status = item.querySelector('.download-status');
+  const pctEl = item.querySelector('.dl-item-pct');
+  const speedEl = item.querySelector('.dl-item-speed');
+  const etaEl = item.querySelector('.dl-item-eta');
 
-  // Update percent display
-  const percentEl = item.querySelector('.download-percent');
-  if (percentEl && pct > 0) {
-    percentEl.textContent = pct.toFixed(1) + '%';
-  } else if (!percentEl && pct > 0) {
-    const details = item.querySelector('.download-item-details');
-    if (details) {
-      const s = document.createElement('span');
-      s.className = 'download-percent';
-      s.textContent = pct.toFixed(1) + '%';
-      const badge = details.querySelector('.download-status');
-      if (badge && badge.nextSibling) details.insertBefore(s, badge.nextSibling);
-      else details.appendChild(s);
-    }
-  }
+  if (bar && data.percent != null) bar.style.width = Math.min(data.percent, 100) + '%';
+  if (status && data.status) { status.textContent = data.status.toUpperCase(); status.className = 'download-status ' + getStatusClass(data.status); }
+  if (pctEl && data.percent != null) pctEl.textContent = data.percent.toFixed(1) + '%';
+  if (speedEl && data.speed) speedEl.textContent = data.speed;
+  if (etaEl && data.eta) etaEl.textContent = 'ETA: ' + data.eta;
 
-  // Update status badge
-  const badge = item.querySelector('.download-status');
-  if (badge && data.status) {
-    badge.textContent = data.status;
-    badge.className = 'download-status ' + getStatusClass(data.status);
-  }
-
-  // Update speed/eta
-  const details = item.querySelector('.download-item-details');
-  if (details) {
-    const speedEl = details.querySelector('.download-speed');
-    const etaEl = details.querySelector('.download-eta');
-    if (speedEl && data.speed) speedEl.textContent = data.speed;
-    else if (data.speed && !speedEl) {
-      const s = document.createElement('span');
-      s.className = 'download-speed';
-      s.textContent = data.speed;
-      details.appendChild(s);
-    }
-    if (etaEl && data.eta) etaEl.textContent = 'ETA: ' + data.eta;
-    else if (data.eta && !etaEl) {
-      const s = document.createElement('span');
-      s.className = 'download-eta';
-      s.textContent = 'ETA: ' + data.eta;
-      details.appendChild(s);
-    }
-  }
-
-  // If status changed to complete/error/cancelled, refresh full list for button updates
   if (data.status === 'complete' || data.status === 'error' || data.status === 'cancelled') {
-    setTimeout(() => refreshDownloadList(listEl), 500);
+    setTimeout(refreshDownloadList, 500);
   }
 }
 
@@ -193,7 +166,7 @@ function getStatusClass(status) {
     case 'complete': return 'status-complete';
     case 'error': return 'status-error';
     case 'cancelled': return 'status-cancelled';
-    case 'queued': return 'status-queued';
+    case 'queued': case 'metadata': return 'status-queued';
     default: return '';
   }
 }

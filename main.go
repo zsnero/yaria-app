@@ -29,6 +29,9 @@ func main() {
 	downloadService := NewDownloadService()
 	settingsService := &SettingsService{}
 	licenseService := &LicenseService{}
+	playerService := &PlayerService{}
+	codecService := &CodecService{}
+	depsService := NewDepsService()
 
 	// Pro services: real implementations in pro build, stubs in free build.
 	proServices := ProServices()
@@ -39,6 +42,9 @@ func main() {
 		downloadService,
 		settingsService,
 		licenseService,
+		playerService,
+		codecService,
+		depsService,
 	}
 	bindings = append(bindings, proServices...)
 
@@ -60,6 +66,9 @@ func main() {
 			app.startup(ctx)
 			downloadService.startup(ctx)
 			licenseService.startup(ctx)
+			playerService.startup(ctx)
+			codecService.startup(ctx)
+			depsService.startup(ctx)
 			ProStartup(ctx, proServices)
 		},
 		OnShutdown: func(ctx context.Context) {

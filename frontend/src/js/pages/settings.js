@@ -45,6 +45,15 @@ async function renderSettings(container) {
       <div id="cache-result" style="display:none;margin-top:10px;font-size:13px;color:var(--green);"></div>
     </div>
 
+    <div class="setting-group" id="codec-section">
+      <div class="setting-label">Video Codecs</div>
+      <div class="setting-desc">Codecs required for playing video streams in the app.</div>
+      <div id="codec-status" style="margin-top:12px;">
+        <div class="spinner" style="width:20px;height:20px;border-width:2px;margin-bottom:0;display:inline-block;vertical-align:middle;"></div>
+        <span style="color:var(--text-muted);font-size:13px;margin-left:8px;">Checking codecs...</span>
+      </div>
+    </div>
+
     <div class="setting-group">
       <div class="setting-label">About</div>
       <div class="setting-desc" style="margin-top:8px">
@@ -58,6 +67,9 @@ async function renderSettings(container) {
 
   // --- License section ---
   loadLicenseSection(page);
+
+  // --- Codec section ---
+  loadCodecSection(page);
 
   // --- TMDB key ---
   let saveTimeout;
@@ -204,5 +216,63 @@ async function loadLicenseSection(page) {
     }
   } catch (e) {
     statusDiv.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">Could not check license status</span>';
+  }
+}
+
+async function loadCodecSection(page) {
+  const statusDiv = page.querySelector('#codec-status');
+  if (!statusDiv) return;
+
+  try {
+    const info = await API.checkCodecs();
+    if (!info || info.supported === false) {
+      statusDiv.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">Codec check not available on this platform</span>';
+      return;
+    }
+
+    const codecs = info.codecs || [];
+    let html = '<div style="font-size:13px;line-height:2;">';
+    codecs.forEach(c => {
+      const icon = c.installed ? '<span style="color:var(--green);">Installed</span>' : '<span style="color:var(--red);">Missing</span>';
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="color:var(--text-dim);">${esc(c.name)}</span>
+        <span>${icon} <span style="color:var(--text-muted);font-size:11px;margin-left:6px;">${esc(c.package)}</span></span>
+      </div>`;
+    });
+    html += '</div>';
+
+    if (!info.all_installed) {
+      html += `<button class="btn btn-primary btn-sm" id="install-codecs-settings" style="margin-top:12px;">Install Missing Codecs</button>`;
+      html += `<div id="codec-install-status" style="display:none;margin-top:8px;font-size:13px;"></div>`;
+    }
+
+    statusDiv.innerHTML = html;
+
+    const installBtn = page.querySelector('#install-codecs-settings');
+    if (installBtn) {
+      installBtn.addEventListener('click', async () => {
+        installBtn.disabled = true;
+        installBtn.textContent = 'Installing...';
+        const st = page.querySelector('#codec-install-status');
+        if (st) { st.style.display = 'block'; st.style.color = 'var(--text-muted)'; st.textContent = 'A password prompt may appear...'; }
+        try {
+          const result = await API.installCodecs();
+          if (result.error) {
+            if (st) { st.style.color = 'var(--red)'; st.textContent = result.error; }
+            installBtn.textContent = 'Install Missing Codecs';
+            installBtn.disabled = false;
+          } else {
+            if (st) { st.style.color = 'var(--green)'; st.textContent = 'Installed! Restart the app for full codec support.'; }
+            setTimeout(() => loadCodecSection(page), 2000);
+          }
+        } catch(e) {
+          if (st) { st.style.color = 'var(--red)'; st.textContent = 'Failed: ' + (e.message || ''); }
+          installBtn.textContent = 'Install Missing Codecs';
+          installBtn.disabled = false;
+        }
+      });
+    }
+  } catch (e) {
+    statusDiv.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">Could not check codec status</span>';
   }
 }
