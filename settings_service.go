@@ -24,6 +24,20 @@ func isMetadataFile(name string) bool {
 // SettingsService provides configuration management methods to the frontend.
 type SettingsService struct{}
 
+// GetTMDBKey returns the saved TMDB API key (masked for display).
+func (s *SettingsService) GetTMDBKey() map[string]interface{} {
+	key := appconfig.TMDBApiKey()
+	if key == "" {
+		return map[string]interface{}{"key": "", "configured": false}
+	}
+	// Mask the key for display: show first 4 and last 4 chars
+	masked := key
+	if len(key) > 8 {
+		masked = key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
+	}
+	return map[string]interface{}{"key": masked, "configured": true}
+}
+
 // SaveTMDBKey saves the TMDB API key to config.
 // Pro services (SearchService, TMDBService) read the key from appconfig on
 // each call, so no explicit refresh is needed here.

@@ -29,5 +29,7 @@ func (s *StreamService) ResumeStream() map[string]interface{} {
 	return map[string]interface{}{"error": stubErr}
 }
 
-func (s *StreamService) GetStreamURL() string    { return "" }
-func (s *StreamService) GetTranscodeURL() string { return "" }
+func (s *StreamService) GetStreamURL() string                       { return "" }
+func (s *StreamService) GetTranscodeURL() string                    { return "" }
+func (s *StreamService) ListFiles() []map[string]interface{}        { return nil }
+func (s *StreamService) SelectFile(index int) map[string]interface{} { return map[string]interface{}{"error": stubErr} }

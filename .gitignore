@@ -42,3 +42,4 @@ Thumbs.db
 # Runtime / config
 .yaria/
 *.log
+cp.sh

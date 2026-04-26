@@ -111,8 +111,18 @@ async function renderSettings(container) {
   loadCodecSection(page);
 
   // --- TMDB key ---
+  // Load saved TMDB key
+  const tmdbInput = page.querySelector('#tmdb-key');
+  try {
+    const tmdbInfo = await API.getTMDBKey();
+    if (tmdbInfo && tmdbInfo.configured) {
+      tmdbInput.value = tmdbInfo.key;
+      tmdbInput.placeholder = 'API key saved';
+    }
+  } catch(e) {}
+
   let saveTimeout;
-  page.querySelector('#tmdb-key').addEventListener('input', (e) => {
+  tmdbInput.addEventListener('input', (e) => {
     clearTimeout(saveTimeout);
     saveTimeout = setTimeout(async () => {
       const key = e.target.value.trim();

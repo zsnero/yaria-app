@@ -54,6 +54,11 @@ func (c *CodecService) CheckCodecs() map[string]interface{} {
 			"av1dec",
 			map[string]string{"arch": "gst-plugins-bad", "debian": "gstreamer1.0-plugins-bad", "fedora": "gstreamer1-plugins-bad"},
 		},
+		{
+			"dav1d (Fast AV1 Decoder)",
+			"dav1ddec",
+			map[string]string{"arch": "gst-plugin-dav1d", "debian": "gstreamer1.0-plugins-bad", "fedora": "gstreamer1-plugins-bad-freeworld"},
+		},
 	}
 
 	distro := detectDistro()

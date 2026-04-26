@@ -15,6 +15,7 @@ type App struct {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	appconfig.Init()
+	startCacheCleaner()
 }
 
 // shutdown is called when the app is closing. Placeholder for cleanup.

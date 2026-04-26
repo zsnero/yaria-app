@@ -1,6 +1,9 @@
 // Wails bridge API for Yaria desktop app
 const API = {
   // Settings
+  async getTMDBKey() {
+    return window.go.main.SettingsService.GetTMDBKey();
+  },
   async saveTMDBKey(key) {
     return window.go.main.SettingsService.SaveTMDBKey(key);
   },
@@ -140,6 +143,12 @@ const API = {
   },
   async resumeStream() {
     return window.go.main.StreamService.ResumeStream();
+  },
+  async listFiles() {
+    return window.go.main.StreamService.ListFiles();
+  },
+  async selectFile(index) {
+    return window.go.main.StreamService.SelectFile(index);
   },
   async getLibrary() {
     return window.go.main.LibraryService.GetAll();
