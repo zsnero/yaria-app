@@ -8,6 +8,7 @@ stream_service.go
 library_service.go
 tmdb_service.go
 pro_bindings.go
+torrent_download_service.go
 
 # Mantorex frontend (proprietary)
 frontend/src/css/pro.css
@@ -16,6 +17,7 @@ frontend/src/js/pages/search.js
 frontend/src/js/pages/detail.js
 frontend/src/js/pages/player.js
 frontend/src/js/pages/library.js
+frontend/src/js/pages/torrent-downloads.js
 frontend/src/js/components/card.js
 frontend/src/js/components/row.js
 frontend/src/js/components/torrentlist.js

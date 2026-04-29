@@ -87,6 +87,11 @@ const API = {
     return window.go.main.LicenseService.IsPro();
   },
 
+  // File picker
+  async listDirectories(path) {
+    return window.go.main.DepsService.ListDirectories(path);
+  },
+
   // App Dependencies
   async checkAppDeps() {
     return window.go.main.DepsService.CheckDeps();
@@ -112,6 +117,9 @@ const API = {
   // Player (mpv/vlc fallback)
   async detectPlayers() {
     return window.go.main.PlayerService.DetectPlayers();
+  },
+  async playFile(filePath) {
+    return window.go.main.PlayerService.PlayFile(filePath);
   },
   async launchPlayer(streamURL, playerName, title, resumeSeconds) {
     return window.go.main.PlayerService.LaunchPlayer(streamURL, playerName || '', title || '', resumeSeconds || 0);
@@ -150,6 +158,35 @@ const API = {
   async selectFile(index) {
     return window.go.main.StreamService.SelectFile(index);
   },
+  // Torrent Downloads
+  async addTorrentDownload(magnet, title, dir) {
+    return window.go.main.TorrentDownloadService.AddDownload(magnet, title || '', dir || '');
+  },
+  async listTorrentDownloads() {
+    return window.go.main.TorrentDownloadService.ListDownloads();
+  },
+  async removeTorrentDownload(id) {
+    return window.go.main.TorrentDownloadService.RemoveDownload(id);
+  },
+  async deleteTorrentDownload(id) {
+    return window.go.main.TorrentDownloadService.DeleteDownload(id);
+  },
+  async cancelTorrentDownload(id) {
+    return window.go.main.TorrentDownloadService.CancelDownload(id);
+  },
+  async pauseTorrentDownload(id) {
+    return window.go.main.TorrentDownloadService.PauseDownload(id);
+  },
+  async resumeTorrentDownload(id) {
+    return window.go.main.TorrentDownloadService.ResumeDownload(id);
+  },
+  async getTorrentDownloadDir() {
+    return window.go.main.TorrentDownloadService.GetDownloadDir();
+  },
+  async selectTorrentDownloadDir() {
+    return window.go.main.TorrentDownloadService.SelectDownloadDir();
+  },
+
   async getLibrary() {
     return window.go.main.LibraryService.GetAll();
   },

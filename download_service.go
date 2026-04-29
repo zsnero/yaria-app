@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -526,13 +527,26 @@ func (d *DownloadService) CancelDownload(id string) map[string]interface{} {
 }
 
 // GetDownloads lists all downloads (active in-memory + persisted history).
+// Results are sorted by started_at descending (newest first) for stable UI ordering.
 func (d *DownloadService) GetDownloads() []map[string]interface{} {
 	d.mu.Lock()
 	// Active downloads from memory
-	result := make([]map[string]interface{}, 0, len(d.downloads))
+	active := make([]*activeDownload, 0, len(d.downloads))
 	activeIDs := make(map[string]bool)
 	for _, ad := range d.downloads {
 		activeIDs[ad.ID] = true
+		active = append(active, ad)
+	}
+	d.mu.Unlock()
+
+	// Sort active downloads by StartedAt descending for stable ordering.
+	// Map iteration is random in Go, so without sorting the UI jumps around.
+	sort.Slice(active, func(i, j int) bool {
+		return active[i].StartedAt > active[j].StartedAt
+	})
+
+	result := make([]map[string]interface{}, 0, len(active))
+	for _, ad := range active {
 		result = append(result, map[string]interface{}{
 			"id":         ad.ID,
 			"url":        ad.URL,
@@ -546,7 +560,6 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 			"started_at": ad.StartedAt,
 		})
 	}
-	d.mu.Unlock()
 
 	// Add stored history (completed/errored downloads from previous sessions)
 	if d.store != nil {

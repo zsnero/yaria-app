@@ -31,6 +31,7 @@ func main() {
 	licenseService := &LicenseService{}
 	playerService := &PlayerService{}
 	codecService := &CodecService{}
+	torrentDlService := NewTorrentDownloadService(nil) // StreamService linked after ProServices
 	depsService := NewDepsService()
 
 	// Pro services: real implementations in pro build, stubs in free build.
@@ -45,6 +46,7 @@ func main() {
 		playerService,
 		codecService,
 		depsService,
+		torrentDlService,
 	}
 	bindings = append(bindings, proServices...)
 
@@ -60,7 +62,7 @@ func main() {
 		Frameless:   false,
 		StartHidden: false,
 		Linux: &linux.Options{
-			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+			WebviewGpuPolicy: linux.WebviewGpuPolicyOnDemand,
 		},
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
@@ -69,11 +71,19 @@ func main() {
 			playerService.startup(ctx)
 			codecService.startup(ctx)
 			depsService.startup(ctx)
+			// Link torrent download service to the streaming service for client reuse
+			for _, svc := range proServices {
+				if ss, ok := svc.(*StreamService); ok {
+					torrentDlService.streamService = ss
+					break
+				}
+			}
+			torrentDlService.startup(ctx)
 			ProStartup(ctx, proServices)
 		},
 		OnShutdown: func(ctx context.Context) {
+			torrentDlService.shutdown()
 			ProShutdown(ctx, proServices)
-			downloadService.shutdown(ctx)
 			app.shutdown(ctx)
 		},
 		Bind: bindings,

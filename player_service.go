@@ -139,6 +139,44 @@ func findSubtitleFiles(videoPath string) []string {
 	return subs
 }
 
+// PlayFile launches a local video file in the best available player.
+func (p *PlayerService) PlayFile(filePath string) map[string]interface{} {
+	if filePath == "" {
+		return map[string]interface{}{"error": "no file path"}
+	}
+
+	// If it's a directory, find the largest video file in it
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return map[string]interface{}{"error": "file not found: " + err.Error()}
+	}
+
+	actualFile := filePath
+	if info.IsDir() {
+		// Find largest video file in directory
+		var bestFile string
+		var bestSize int64
+		videoExts := map[string]bool{".mp4": true, ".mkv": true, ".avi": true, ".webm": true, ".mov": true, ".m4v": true}
+		filepath.Walk(filePath, func(path string, fi os.FileInfo, err error) error {
+			if err != nil || fi.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if videoExts[ext] && fi.Size() > bestSize {
+				bestSize = fi.Size()
+				bestFile = path
+			}
+			return nil
+		})
+		if bestFile == "" {
+			return map[string]interface{}{"error": "no video files found in directory"}
+		}
+		actualFile = bestFile
+	}
+
+	return p.LaunchPlayer(actualFile, "", filepath.Base(actualFile), 0)
+}
+
 func installHint() string {
 	switch runtime.GOOS {
 	case "linux":

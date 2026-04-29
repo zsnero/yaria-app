@@ -30,6 +30,7 @@ function updateNavRight(tab) {
       <div class="search-box">
         <input type="text" id="search-input" placeholder="Search..." autocomplete="off">
       </div>
+      <a href="#/torrent-downloads" class="nav-link">Downloads</a>
       <a href="#/library" class="nav-link">Library</a>
       <a href="#/settings" class="nav-link">Settings</a>
     `;
@@ -72,7 +73,8 @@ function resetProCache() { _proChecked = false; _isPro = false; }
 function isMantorexRoute(path) {
   return path === '/mantorex' || path === '/mantorex/' ||
          path === '/search' || path === '/detail' ||
-         path === '/play' || path === '/library';
+         path === '/play' || path === '/library' ||
+         path === '/torrent-downloads';
 }
 
 // Activation gate shown when Pro is not available
@@ -177,6 +179,8 @@ function routePro(path, params) {
     renderPlayer(app, params.get('magnet')||'', params.get('title')||'', params.get('poster')||'');
   } else if (path === '/library' && typeof renderLibrary === 'function') {
     renderLibrary(app);
+  } else if (path === '/torrent-downloads') {
+    renderTorrentDownloads(app);
   } else {
     renderActivationGate(app);
   }
@@ -188,12 +192,26 @@ async function route() {
   const [path, queryStr] = hash.substring(1).split('?');
   const params = new URLSearchParams(queryStr || '');
 
+  // Save detail page scroll position before navigating away
+  if (typeof _detailCache !== 'undefined' && _detailCache.key) {
+    _detailCache.scroll = window.scrollY;
+  }
+
   // Cleanup
   if (typeof cleanupPlayer === 'function' && !path.startsWith('/play')) cleanupPlayer();
   if (typeof cleanupYariaHome === 'function' && !path.startsWith('/yaria')) cleanupYariaHome();
   if (typeof cleanupYariaDownloads === 'function' && path !== '/yaria/downloads') cleanupYariaDownloads();
+  if (typeof cleanupTorrentDownloads === 'function' && path !== '/torrent-downloads') cleanupTorrentDownloads();
 
-  window.scrollTo(0, 0);
+  // Don't reset scroll for cached pages (handled by the page itself)
+  if (path !== '/detail') {
+    window.scrollTo(0, 0);
+  }
+
+  // Trigger page transition animation
+  app.style.animation = 'none';
+  app.offsetHeight; // force reflow
+  app.style.animation = 'pageIn 0.25s ease-out';
 
   activeTab = getActiveTab(path);
   updateTabHighlight(activeTab);

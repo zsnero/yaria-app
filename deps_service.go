@@ -42,6 +42,38 @@ func (d *DepsService) startup(ctx context.Context) {
 	os.MkdirAll(d.depsDir, 0755)
 }
 
+// ListDirectories returns subdirectories of a given path.
+// Used by the in-app file picker.
+func (d *DepsService) ListDirectories(path string) []map[string]interface{} {
+	// Expand ~
+	if strings.HasPrefix(path, "~") {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, path[1:])
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil
+	}
+
+	var dirs []map[string]interface{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Skip hidden directories
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		dirs = append(dirs, map[string]interface{}{
+			"name": name,
+			"path": filepath.Join(path, name),
+		})
+	}
+	return dirs
+}
+
 // FFmpegPath returns the path to the bundled FFmpeg binary, or empty if not installed.
 func (d *DepsService) FFmpegPath() string {
 	p := filepath.Join(d.depsDir, "ffmpeg")
