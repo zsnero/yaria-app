@@ -38,7 +38,9 @@ echo ""
 if [ "$(id -u)" -ne 0 ]; then
     if command -v sudo &>/dev/null; then
         info "This script needs root access. Re-running with sudo..."
-        exec sudo bash "$0" "$@"
+        SELF=$(mktemp /tmp/yaria-uninstall.XXXXXX.sh)
+        curl -fsSL https://yaria.live/uninstall.sh -o "$SELF"
+        exec sudo bash "$SELF" "$@"
     else
         echo -e "${RED}[ERROR]${NC} This script must be run as root (or with sudo)."
         exit 1

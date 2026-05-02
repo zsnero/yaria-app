@@ -45,7 +45,10 @@ echo ""
 if [ "$(id -u)" -ne 0 ]; then
     if command -v sudo &>/dev/null; then
         info "This script needs root access. Re-running with sudo..."
-        exec sudo bash "$0" "$@"
+        # When piped via curl, $0 is bash itself. Save script to temp file first.
+        SELF=$(mktemp /tmp/yaria-install.XXXXXX.sh)
+        curl -fsSL https://yaria.live/install.sh -o "$SELF"
+        exec sudo bash "$SELF" "$@"
     else
         error "This script must be run as root (or with sudo)."
     fi
@@ -96,10 +99,10 @@ info "Extracting..."
 tar -xzf "$TMP_DIR/yaria.tar.gz" -C "$TMP_DIR"
 
 # Find the binary (it might be in a subdirectory)
-BINARY=$(find "$TMP_DIR" -name "yaria-app" -o -name "YariaApp" -o -name "yaria" -type f -executable | head -1)
+BINARY=$(find "$TMP_DIR" -type f -executable \( -name "yaria-app" -o -name "YariaApp" -o -name "yaria" \) | head -1)
 if [ -z "$BINARY" ]; then
     # Try any executable
-    BINARY=$(find "$TMP_DIR" -type f -executable ! -name "*.sh" | head -1)
+    BINARY=$(find "$TMP_DIR" -type f -executable ! -name "*.sh" ! -name "*.png" | head -1)
 fi
 
 if [ -z "$BINARY" ]; then
