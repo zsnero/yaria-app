@@ -2,7 +2,7 @@
 
 package main
 
-const stubErr = "Mantorex is not available in this build. Get Yaria Pro at yaria.app"
+const stubErr = "Mantorex is not available in this build. Get Yaria Pro at yaria.xyz"
 
 // SearchService is a stub for free builds.
 type SearchService struct{}

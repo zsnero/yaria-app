@@ -345,7 +345,7 @@ async function renderSettings(container) {
 <h3>Data We Collect</h3>
 <p><strong>We do not collect, transmit, or store any personal data on our servers.</strong> All user data stays on your device.</p>
 <ul>
-  <li><strong>License keys</strong> are validated against our server (yaria.app) to verify your subscription. The server receives your license key and a device fingerprint (a hash derived from your machine ID). No personal information is sent.</li>
+  <li><strong>License keys</strong> are validated against our server (yaria.xyz) to verify your subscription. The server receives your license key and a device fingerprint (a hash derived from your machine ID). No personal information is sent.</li>
   <li><strong>TMDB API key</strong> (if provided) is stored locally and used to fetch movie/TV metadata directly from The Movie Database API. We do not proxy or log these requests.</li>
   <li><strong>Search queries</strong> in Mantorex are sent directly to third-party torrent indexing websites. We do not log, proxy, or store your searches.</li>
   <li><strong>Download history, library data, watch progress, and settings</strong> are stored locally on your device in a BoltDB database under <code>~/.yaria/</code> and <code>~/.config/</code>.</li>
@@ -354,7 +354,7 @@ async function renderSettings(container) {
 
 <h3>Third-Party Services</h3>
 <ul>
-  <li><strong>yaria.app</strong> -- License validation only. Receives license key + device ID hash.</li>
+  <li><strong>yaria.xyz</strong> -- License validation only. Receives license key + device ID hash.</li>
   <li><strong>TMDB (The Movie Database)</strong> -- Metadata queries using your own API key.</li>
   <li><strong>Torrent indexing sites</strong> -- Search queries are sent directly from your device to third-party sites. We have no control over their privacy practices.</li>
   <li><strong>GitHub</strong> -- Dependency updates (yt-dlp, FFmpeg) are fetched from GitHub releases.</li>
@@ -370,7 +370,7 @@ async function renderSettings(container) {
 <p>We may update this policy. Changes will be included in future versions of the App.</p>
 
 <h3>Contact</h3>
-<p>For questions about this policy, visit <a href="https://yaria.app" target="_blank" style="color:var(--accent);">yaria.app</a>.</p>
+<p>For questions about this policy, visit <a href="https://yaria.xyz" target="_blank" style="color:var(--accent);">yaria.xyz</a>.</p>
   `));
 
   // --- Terms of Use ---
@@ -404,7 +404,7 @@ async function renderSettings(container) {
 <h3>Licensing</h3>
 <ul>
   <li>The free version of Yaria is available for personal use.</li>
-  <li>Yaria Pro requires a valid license key purchased from yaria.app.</li>
+  <li>Yaria Pro requires a valid license key purchased from yaria.xyz.</li>
   <li>License keys are bound to a single device and are non-transferable.</li>
   <li>We reserve the right to revoke licenses that violate these terms.</li>
 </ul>
@@ -419,7 +419,7 @@ async function renderSettings(container) {
 <p>We reserve the right to modify these terms. Continued use after changes constitutes acceptance.</p>
 
 <h3>Contact</h3>
-<p>For questions about these terms, visit <a href="https://yaria.app" target="_blank" style="color:var(--accent);">yaria.app</a>.</p>
+<p>For questions about these terms, visit <a href="https://yaria.xyz" target="_blank" style="color:var(--accent);">yaria.xyz</a>.</p>
   `));
 
   // --- Cache stats ---
@@ -508,7 +508,7 @@ async function loadLicenseSection(page) {
         <div id="license-error" style="display:none;margin-top:8px;font-size:13px;color:var(--red);"></div>
         <div id="license-success" style="display:none;margin-top:8px;font-size:13px;color:var(--green);"></div>
         <p style="color:var(--text-muted);font-size:12px;margin-top:12px;">
-          Get a license at <a href="https://yaria.app" target="_blank" style="color:var(--accent);">yaria.app</a>
+          Get a license at <a href="https://yaria.xyz" target="_blank" style="color:var(--accent);">yaria.xyz</a>
         </p>
       `;
 
