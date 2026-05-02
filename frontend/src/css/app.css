@@ -114,13 +114,13 @@ a { color: inherit; text-decoration: none; }
 ::selection { background: var(--accent); color: #fff; }
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 
-/* === Page Transitions === */
+/* === Page Transitions (Apple-style spring) === */
 #app {
-  animation: pageIn 0.3s ease-out;
+  animation: pageIn 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes pageIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(12px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* === Micro-Animations === */
@@ -249,8 +249,15 @@ h1 { line-height: 1.1; }
 h2 { line-height: 1.2; }
 p, .detail-overview, .setting-desc { line-height: 1.6; }
 
-/* Smooth scrolling */
-html { scroll-behavior: smooth; }
+/* Smooth scrolling -- Apple-style momentum */
+html {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+* {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
 
 /* Loading screen with skeleton */
 .loading-skeleton {
@@ -355,29 +362,36 @@ img {
   transition: opacity 0.3s;
 }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+/* Overscroll behavior -- prevent rubber-band on main page, allow in scrollable panels */
+body { overscroll-behavior: none; }
+.stg-content, .library-page, .local-home-page, .remote-home-page, .detail-page {
+  overscroll-behavior: contain;
+}
 
 /* === Navbar === */
 #navbar {
   position: fixed; top: 0; left: 0; right: 0;
   height: var(--nav-h);
-  background: rgba(5,5,16,0.5);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border-bottom: 1px solid rgba(255,255,255,0.03);
+  background: rgba(10, 10, 20, 0.55);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   display: flex; align-items: center;
   padding: 0 32px; z-index: 100; gap: 20px;
   transition: background 0.4s;
 }
 .logo {
-  font-size: 20px; font-weight: 800;
-  background: linear-gradient(135deg, #c4b5fd, #67e8f9, #f0abfc);
-  background-size: 200% 200%;
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: logoShimmer 5s ease-in-out infinite;
-  letter-spacing: -0.3px;
+  display: flex; align-items: center;
 }
+.nav-logo-img {
+  height: 34px; width: auto;
+  object-fit: contain;
+  transition: opacity 0.3s;
+}
+.nav-logo-img:hover { opacity: 0.8; }
 @keyframes logoShimmer {
   0%, 100% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
@@ -478,13 +492,19 @@ img {
 }
 .yaria-logo-wrap {
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 28px;
+  gap: 20px;
 }
-.yaria-logo-img {
-  width: 220px;
-  height: auto;
+.yaria-hero-icon {
+  height: 140px;
+  width: auto;
+}
+.yaria-hero-wordmark {
+  height: 42px;
+  width: auto;
 }
 .yaria-subtitle {
   font-size: 20px;
@@ -777,8 +797,9 @@ img {
 .stg-nav-icon { width: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .stg-version { padding: 12px 20px; font-size: 11px; color: var(--text-muted); }
 .stg-content { flex: 1; overflow-y: auto; padding: 28px 36px; }
-.stg-panel { display: none; }
-.stg-panel.active { display: block; }
+.stg-panel { display: none; opacity: 0; }
+.stg-panel.active { display: block; opacity: 1; animation: stgFadeIn 0.25s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes stgFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .stg-panel-title { font-size: 20px; font-weight: 700; margin-bottom: 24px; }
 .setting-group { margin-bottom: 24px; }
 @media (max-width: 768px) {
@@ -806,7 +827,8 @@ select.setting-input option { background: #14141e; color: var(--text); }
   .settings-page, .download-page, .yaria-home-page, .yaria-downloads-page { padding: 20px; }
   .download-input-wrap { flex-direction: column; }
   .yaria-title { font-size: 42px; }
-  .yaria-logo-img { width: 160px; }
+  .yaria-hero-icon { height: 140px; }
+  .yaria-hero-wordmark { height: 44px; }
   .yaria-hero { padding: 48px 16px 24px; }
   .nav-tab { padding: 6px 14px; font-size: 12px; }
   .nav-right .search-box { display: none; }

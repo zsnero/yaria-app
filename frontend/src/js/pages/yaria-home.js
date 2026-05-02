@@ -13,10 +13,10 @@ async function renderYariaHome(container) {
   hero.className = 'yaria-hero';
   hero.innerHTML = `
     <div class="yaria-logo-wrap">
-      <img src="img/yaria-logo.svg" alt="Yaria" class="yaria-logo-img">
+      <img src="img/yaria-fox-crop.png" alt="" class="yaria-hero-icon">
+      <img src="img/yaria-text-crop.png" alt="Yaria" class="yaria-hero-wordmark">
     </div>
     <p class="yaria-subtitle">Video & Audio Downloader</p>
-    <!-- <p class="yaria-desc">Download from YouTube, Vimeo, Twitter, TikTok, and 1000+ sites</p> -->
   `;
   page.appendChild(hero);
 

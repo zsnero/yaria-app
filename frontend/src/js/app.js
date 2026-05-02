@@ -52,19 +52,20 @@ function updateTabHighlight(tab) {
 }
 
 async function checkPro() {
-  if (_proChecked) return _isPro;
+  if (_proChecked && _isPro) return true; // only cache positive results
   // Wait for Wails runtime to be ready
   let retries = 0;
-  while ((!window.go || !window.go.main || !window.go.main.LicenseService) && retries < 50) {
+  while ((!window.go || !window.go.main || !window.go.main.LicenseService) && retries < 100) {
     await new Promise(r => setTimeout(r, 100));
     retries++;
   }
   try {
     _isPro = await API.isPro();
+    _proChecked = true;
   } catch (e) {
     _isPro = false;
+    _proChecked = false; // don't cache failures -- retry next time
   }
-  _proChecked = true;
   return _isPro;
 }
 
