@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Yaria
+GenericName=Media Center & Video Downloader
+Comment=Download videos, manage local media, stream torrents, and serve to your devices
+Exec=/opt/yaria/yaria-app
+Icon=yaria
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Network;
+Keywords=video;download;torrent;media;stream;
+StartupWMClass=Yaria
+MimeType=x-scheme-handler/magnet;
