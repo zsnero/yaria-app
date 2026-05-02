@@ -159,6 +159,47 @@ async function renderActivationGate(container) {
   }).catch(() => {});
 }
 
+// Disclaimer gate -- shown once before first Mantorex use
+function renderDisclaimer(container) {
+  container.innerHTML = '';
+  const page = document.createElement('div');
+  page.style.cssText = 'max-width:600px;margin:0 auto;padding:60px 24px;';
+  page.innerHTML = `
+    <div style="text-align:center;margin-bottom:32px;">
+      <h1 style="font-size:36px;font-weight:800;background:linear-gradient(135deg,#c4b5fd,#8b5cf6,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;">Mantorex</h1>
+      <p style="color:var(--text-dim);font-size:14px;">Torrent Search & Streaming</p>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius);padding:28px;">
+      <h2 style="font-size:18px;font-weight:700;margin-bottom:16px;color:var(--yellow);">Legal Disclaimer</h2>
+      <div style="font-size:13px;color:var(--text-dim);line-height:1.7;">
+        <p style="margin-bottom:12px;">Mantorex is a <strong style="color:var(--text);">torrent search engine and BitTorrent client</strong>. It does not host, upload, or distribute any content. All search results are fetched from third-party indexing websites.</p>
+        <p style="margin-bottom:12px;">By using Mantorex, you acknowledge and agree that:</p>
+        <ul style="padding-left:20px;margin-bottom:12px;">
+          <li style="margin-bottom:8px;"><strong style="color:var(--text);">You are solely responsible</strong> for ensuring that your use of BitTorrent and any content you download or stream complies with all applicable laws in your jurisdiction.</li>
+          <li style="margin-bottom:8px;">Downloading or streaming <strong style="color:var(--text);">copyrighted material without authorization</strong> from the copyright holder may be illegal in your country.</li>
+          <li style="margin-bottom:8px;">The developers of Yaria <strong style="color:var(--text);">do not condone, encourage, or promote</strong> the downloading or streaming of copyrighted content without proper authorization.</li>
+          <li style="margin-bottom:8px;">The developers assume <strong style="color:var(--text);">no liability</strong> for how you choose to use this software or the content you access through it.</li>
+          <li style="margin-bottom:8px;">Torrent search results are provided by <strong style="color:var(--text);">third-party websites</strong> over which we have no control. We make no guarantees about the accuracy, legality, or safety of listed content.</li>
+        </ul>
+        <p style="margin-bottom:0;">Use this feature at your own risk and discretion. If you do not agree with these terms, click "Decline" to return to the Yaria downloader.</p>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:24px;justify-content:center;">
+      <button class="btn btn-ghost" id="disc-decline" style="padding:12px 32px;">Decline</button>
+      <button class="btn btn-primary" id="disc-accept" style="padding:12px 32px;">I Understand & Accept</button>
+    </div>
+  `;
+  container.appendChild(page);
+
+  page.querySelector('#disc-accept').addEventListener('click', () => {
+    localStorage.setItem('mantorex_disclaimer_accepted', Date.now().toString());
+    route();
+  });
+  page.querySelector('#disc-decline').addEventListener('click', () => {
+    window.location.hash = '#/yaria';
+  });
+}
+
 // Route Pro pages
 function routePro(path, params) {
   if (path === '/mantorex' || path === '/mantorex/') {
@@ -239,6 +280,10 @@ async function route() {
   if (isMantorexRoute(path)) {
     const pro = await checkPro();
     if (!pro) { await renderActivationGate(app); return; }
+    // First-time disclaimer gate
+    if (!localStorage.getItem('mantorex_disclaimer_accepted')) {
+      renderDisclaimer(app); return;
+    }
     routePro(path, params);
     return;
   }

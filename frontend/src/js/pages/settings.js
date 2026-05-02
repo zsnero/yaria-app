@@ -99,6 +99,10 @@ async function renderSettings(container) {
         Yaria Desktop App v1.0.0<br>
         Video & audio downloader.
       </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" id="show-privacy">Privacy Policy</button>
+        <button class="btn btn-ghost btn-sm" id="show-terms">Terms of Use</button>
+      </div>
     </div>
   `;
 
@@ -223,6 +227,93 @@ async function renderSettings(container) {
   // --- Back ---
   page.querySelector('#settings-back').addEventListener('click', () => window.history.back());
 
+  // --- Privacy Policy ---
+  page.querySelector('#show-privacy').addEventListener('click', () => showLegalModal('Privacy Policy', `
+<p>Last updated: May 2026</p>
+
+<h3>Overview</h3>
+<p>Yaria ("the App") is a desktop application. We respect your privacy and are committed to transparency about how the App operates.</p>
+
+<h3>Data We Collect</h3>
+<p><strong>We do not collect, transmit, or store any personal data on our servers.</strong> All user data stays on your device.</p>
+<ul>
+  <li><strong>License keys</strong> are validated against our server (yaria.app) to verify your subscription. The server receives your license key and a device fingerprint (a hash derived from your machine ID). No personal information is sent.</li>
+  <li><strong>TMDB API key</strong> (if provided) is stored locally and used to fetch movie/TV metadata directly from The Movie Database API. We do not proxy or log these requests.</li>
+  <li><strong>Search queries</strong> in Mantorex are sent directly to third-party torrent indexing websites. We do not log, proxy, or store your searches.</li>
+  <li><strong>Download history, library data, watch progress, and settings</strong> are stored locally on your device in a BoltDB database under <code>~/.yaria/</code> and <code>~/.config/</code>.</li>
+  <li><strong>Cookies</strong> extracted for video downloads are cached locally at <code>~/.yaria/cookies.txt</code> and are never transmitted to us.</li>
+</ul>
+
+<h3>Third-Party Services</h3>
+<ul>
+  <li><strong>yaria.app</strong> -- License validation only. Receives license key + device ID hash.</li>
+  <li><strong>TMDB (The Movie Database)</strong> -- Metadata queries using your own API key.</li>
+  <li><strong>Torrent indexing sites</strong> -- Search queries are sent directly from your device to third-party sites. We have no control over their privacy practices.</li>
+  <li><strong>GitHub</strong> -- Dependency updates (yt-dlp, FFmpeg) are fetched from GitHub releases.</li>
+</ul>
+
+<h3>Data Storage</h3>
+<p>All data is stored locally on your machine. You can delete all app data by removing the <code>~/.yaria/</code> and <code>~/.config/yaria/</code> directories.</p>
+
+<h3>Analytics & Telemetry</h3>
+<p>The App does not include any analytics, telemetry, crash reporting, or tracking of any kind.</p>
+
+<h3>Changes</h3>
+<p>We may update this policy. Changes will be included in future versions of the App.</p>
+
+<h3>Contact</h3>
+<p>For questions about this policy, visit <a href="https://yaria.app" target="_blank" style="color:var(--accent);">yaria.app</a>.</p>
+  `));
+
+  // --- Terms of Use ---
+  page.querySelector('#show-terms').addEventListener('click', () => showLegalModal('Terms of Use', `
+<p>Last updated: May 2026</p>
+
+<h3>Acceptance</h3>
+<p>By downloading, installing, or using Yaria ("the App"), you agree to these Terms of Use. If you do not agree, do not use the App.</p>
+
+<h3>Description of Service</h3>
+<p>Yaria is a video and audio downloader that wraps yt-dlp. The Pro version ("Yaria Pro") includes Mantorex, a torrent search engine and BitTorrent client.</p>
+
+<h3>Lawful Use</h3>
+<ul>
+  <li>You agree to use the App <strong>only for lawful purposes</strong> and in compliance with all applicable local, national, and international laws.</li>
+  <li>The App is a tool. <strong>You are solely responsible</strong> for the content you download, stream, or share using the App.</li>
+  <li>Downloading or distributing copyrighted material without authorization from the copyright holder is illegal in most jurisdictions. <strong>We do not condone or encourage copyright infringement.</strong></li>
+</ul>
+
+<h3>Mantorex (Torrent Features)</h3>
+<ul>
+  <li>Mantorex searches third-party torrent indexing websites. We do not host, index, or control any torrent content.</li>
+  <li>Search results are fetched directly from third-party sites. We make no warranties about the accuracy, legality, or safety of listed content.</li>
+  <li>By using Mantorex, you accept the Legal Disclaimer presented on first use.</li>
+  <li>BitTorrent is a peer-to-peer protocol. When downloading or streaming, your IP address is visible to other peers in the swarm.</li>
+</ul>
+
+<h3>Intellectual Property</h3>
+<p>Yaria, the Yaria logo, and Mantorex are property of their respective owners. Third-party tools (yt-dlp, FFmpeg, mpv, aria2) are used under their respective open-source licenses.</p>
+
+<h3>Licensing</h3>
+<ul>
+  <li>The free version of Yaria is available for personal use.</li>
+  <li>Yaria Pro requires a valid license key purchased from yaria.app.</li>
+  <li>License keys are bound to a single device and are non-transferable.</li>
+  <li>We reserve the right to revoke licenses that violate these terms.</li>
+</ul>
+
+<h3>Disclaimer of Warranties</h3>
+<p>The App is provided <strong>"as is"</strong> without warranty of any kind. We do not guarantee uninterrupted or error-free operation. Use at your own risk.</p>
+
+<h3>Limitation of Liability</h3>
+<p>To the maximum extent permitted by law, the developers shall not be liable for any damages arising from the use of this App, including but not limited to damages from downloaded content, legal actions, data loss, or service interruptions.</p>
+
+<h3>Changes</h3>
+<p>We reserve the right to modify these terms. Continued use after changes constitutes acceptance.</p>
+
+<h3>Contact</h3>
+<p>For questions about these terms, visit <a href="https://yaria.app" target="_blank" style="color:var(--accent);">yaria.app</a>.</p>
+  `));
+
   // --- Cache stats ---
   try {
     const stats = await API.getCacheStats();
@@ -344,6 +435,44 @@ async function loadLicenseSection(page) {
   } catch (e) {
     statusDiv.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">Could not check license status</span>';
   }
+}
+
+function showLegalModal(title, html) {
+  // Remove any existing modal
+  const existing = document.querySelector('.legal-modal-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'legal-modal-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;animation:pageIn 0.2s ease-out;';
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'width:640px;max-width:92vw;max-height:80vh;background:#12121e;border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius);display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,0.6);';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:18px 24px;border-bottom:1px solid rgba(255,255,255,0.06);';
+  header.innerHTML = `<h3 style="font-size:18px;font-weight:700;margin:0;">${title}</h3><button id="legal-close" style="background:none;border:none;color:var(--text-muted);font-size:22px;cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:50;">&times;</button>`;
+
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;overflow-y:auto;padding:24px;font-size:13px;color:var(--text-dim);line-height:1.7;';
+  body.innerHTML = html;
+
+  // Style the inner HTML elements
+  body.querySelectorAll('h3').forEach(h => h.style.cssText = 'font-size:15px;font-weight:700;color:var(--text);margin:20px 0 8px;');
+  body.querySelectorAll('h3')[0].style.marginTop = '0';
+  body.querySelectorAll('ul').forEach(u => u.style.cssText = 'padding-left:20px;margin:8px 0;');
+  body.querySelectorAll('li').forEach(l => l.style.cssText = 'margin-bottom:6px;');
+  body.querySelectorAll('code').forEach(c => c.style.cssText = 'background:rgba(255,255,255,0.06);padding:1px 6px;border-radius:3px;font-size:12px;');
+  body.querySelectorAll('p').forEach(p => { if (!p.style.marginBottom) p.style.marginBottom = '10px'; });
+
+  modal.appendChild(header);
+  modal.appendChild(body);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  header.querySelector('#legal-close').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 }
 
 async function loadCodecSection(page) {
