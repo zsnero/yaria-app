@@ -210,18 +210,19 @@ async function renderYariaHome(container) {
         });
       }
 
-      // Browse dir
+      // Browse dir -- use in-app file picker
       const browseBtn = content.querySelector('#dl-browse-btn');
       if (browseBtn) {
-        browseBtn.addEventListener('click', async () => {
-          try {
-            const dir = await API.selectDownloadDir();
-            if (dir) {
-              downloadDir = dir;
-              const inp = content.querySelector('#dl-dir');
-              if (inp) inp.value = dir;
-            }
-          } catch(e) {}
+        browseBtn.addEventListener('click', () => {
+          if (typeof showDownloadPicker === 'function') {
+            showDownloadPicker((dir) => {
+              if (dir) {
+                downloadDir = dir;
+                const inp = content.querySelector('#dl-dir');
+                if (inp) inp.value = dir;
+              }
+            });
+          }
         });
       }
 

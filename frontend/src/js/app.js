@@ -74,7 +74,8 @@ function isMantorexRoute(path) {
   return path === '/mantorex' || path === '/mantorex/' ||
          path === '/search' || path === '/detail' ||
          path === '/play' || path === '/library' ||
-         path === '/torrent-downloads';
+         path === '/torrent-downloads' ||
+         path === '/local' || path === '/remote';
 }
 
 // Activation gate shown when Pro is not available
@@ -202,7 +203,23 @@ function renderDisclaimer(container) {
 
 // Route Pro pages
 function routePro(path, params) {
-  if (path === '/mantorex' || path === '/mantorex/') {
+  // Show mode switcher on Mantorex pages (except player)
+  if (path !== '/play' && typeof renderModeSwitcher === 'function') {
+    renderModeSwitcher();
+  } else if (typeof removeModeSwitcher === 'function') {
+    removeModeSwitcher();
+  }
+
+  if (path === '/local') {
+    if (typeof setMantorexMode === 'function') setMantorexMode('local');
+    if (typeof renderLocalHome === 'function') renderLocalHome(app);
+    else renderActivationGate(app);
+  } else if (path === '/remote') {
+    if (typeof setMantorexMode === 'function') setMantorexMode('remote');
+    if (typeof renderRemoteHome === 'function') renderRemoteHome(app);
+    else renderActivationGate(app);
+  } else if (path === '/mantorex' || path === '/mantorex/') {
+    if (typeof setMantorexMode === 'function') setMantorexMode('torrents');
     if (typeof renderHome === 'function') renderHome(app);
     else renderActivationGate(app);
   } else if (path === '/search') {
@@ -217,7 +234,15 @@ function routePro(path, params) {
   } else if (path === '/detail' && typeof renderDetail === 'function') {
     renderDetail(app, params);
   } else if (path === '/play' && typeof renderPlayer === 'function') {
-    renderPlayer(app, params.get('magnet')||'', params.get('title')||'', params.get('poster')||'');
+    const localId = params.get('local') || '';
+    const remoteStream = params.get('remoteStream') || '';
+    if (localId) {
+      renderLocalPlayer(app, localId, params.get('title')||'', params.get('poster')||'');
+    } else if (remoteStream) {
+      renderRemotePlayer(app, remoteStream, params.get('title')||'');
+    } else {
+      renderPlayer(app, params.get('magnet')||'', params.get('title')||'', params.get('poster')||'');
+    }
   } else if (path === '/library' && typeof renderLibrary === 'function') {
     renderLibrary(app);
   } else if (path === '/torrent-downloads') {
@@ -262,7 +287,10 @@ async function route() {
   const navSearchBox = document.querySelector('#nav-right .search-box');
   if (navSearchBox) navSearchBox.classList.toggle('hidden', path === '/mantorex' || path === '/mantorex/');
 
-  // Yaria routes (always available)
+  // Yaria routes (always available) -- hide mode switcher
+  if (path === '/yaria' || path === '/yaria/' || path === '/yaria/downloads' || path === '/settings') {
+    if (typeof removeModeSwitcher === 'function') removeModeSwitcher();
+  }
   if (path === '/yaria' || path === '/yaria/') {
     renderYariaHome(app); return;
   }

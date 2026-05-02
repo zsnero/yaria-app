@@ -33,6 +33,10 @@ func main() {
 	codecService := &CodecService{}
 	torrentDlService := NewTorrentDownloadService(nil) // StreamService linked after ProServices
 	depsService := NewDepsService()
+	mediaService := NewMediaService()
+	remoteService := NewRemoteService()
+	mediaServer := NewMediaServer()
+	dlnaService := NewDLNAService()
 
 	// Pro services: real implementations in pro build, stubs in free build.
 	proServices := ProServices()
@@ -47,6 +51,10 @@ func main() {
 		codecService,
 		depsService,
 		torrentDlService,
+		mediaService,
+		remoteService,
+		mediaServer,
+		dlnaService,
 	}
 	bindings = append(bindings, proServices...)
 
@@ -79,10 +87,21 @@ func main() {
 				}
 			}
 			torrentDlService.startup(ctx)
+			mediaService.startup(ctx)
+			remoteService.LinkMediaDB(mediaService)
+			remoteService.startup(ctx)
+			mediaServer.LinkMediaService(mediaService)
+			mediaServer.startup(ctx)
+			dlnaService.LinkMediaService(mediaService)
+			dlnaService.startup(ctx)
 			ProStartup(ctx, proServices)
 		},
 		OnShutdown: func(ctx context.Context) {
 			torrentDlService.shutdown()
+			mediaService.shutdown()
+			remoteService.shutdown()
+			mediaServer.shutdown()
+			dlnaService.shutdown()
 			ProShutdown(ctx, proServices)
 			app.shutdown(ctx)
 		},

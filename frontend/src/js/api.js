@@ -242,6 +242,173 @@ const API = {
   async tmdbSeasonDetails(tvId, season) {
     return window.go.main.TMDBService.GetSeasonDetails(tvId, season);
   },
+
+  // Local Media Library
+  async getMediaFolders() {
+    return window.go.main.MediaService.GetMediaFolders();
+  },
+  async addMediaFolder(path, mediaType) {
+    return window.go.main.MediaService.AddMediaFolder(path, mediaType);
+  },
+  async removeMediaFolder(path, mediaType) {
+    return window.go.main.MediaService.RemoveMediaFolder(path, mediaType);
+  },
+  async browseMediaFolder() {
+    return window.go.main.MediaService.BrowseMediaFolder();
+  },
+  async scanMedia() {
+    return window.go.main.MediaService.ScanAll();
+  },
+  async scanMediaStatus() {
+    return window.go.main.MediaService.ScanStatus();
+  },
+  async getAllMedia(sortBy) {
+    return window.go.main.MediaService.GetAllMedia(sortBy || 'added');
+  },
+  async getLocalMovies(sortBy) {
+    return window.go.main.MediaService.GetMovies(sortBy || 'added');
+  },
+  async getLocalTVShows() {
+    return window.go.main.MediaService.GetTVShows();
+  },
+  async getRecentlyAddedMedia(days) {
+    return window.go.main.MediaService.GetRecentlyAdded(days || 30);
+  },
+  async searchLocalMedia(query) {
+    return window.go.main.MediaService.SearchMedia(query);
+  },
+  async getMediaDetails(id) {
+    return window.go.main.MediaService.GetMediaDetails(id);
+  },
+  async getMediaThumbnail(id) {
+    return window.go.main.MediaService.GetThumbnailData(id);
+  },
+  async playLocalMedia(id) {
+    return window.go.main.MediaService.PlayMedia(id);
+  },
+  async playLocalMediaExternal(id) {
+    return window.go.main.MediaService.PlayMediaExternal(id);
+  },
+  async getLocalStreamURL() {
+    return window.go.main.MediaService.GetLocalStreamURL();
+  },
+  async matchMediaTMDB(mediaId, tmdbId, mediaType) {
+    return window.go.main.MediaService.MatchTMDB(mediaId, tmdbId, mediaType || '');
+  },
+  async getUnmatchedMedia() {
+    return window.go.main.MediaService.GetUnmatched();
+  },
+  // Remote Sources
+  async getRemoteSources() {
+    return window.go.main.RemoteService.GetSources();
+  },
+  async addRemoteSource(sourceJSON) {
+    return window.go.main.RemoteService.AddSource(sourceJSON);
+  },
+  async removeRemoteSource(id) {
+    return window.go.main.RemoteService.RemoveSource(id);
+  },
+  async connectRemote(id, password) {
+    return window.go.main.RemoteService.Connect(id, password || '');
+  },
+  async disconnectRemote(id) {
+    return window.go.main.RemoteService.Disconnect(id);
+  },
+  async isRemoteConnected(id) {
+    return window.go.main.RemoteService.IsConnected(id);
+  },
+  async connectedSources() {
+    return window.go.main.RemoteService.ConnectedSources();
+  },
+  async browseRemote(sourceId, path) {
+    return window.go.main.RemoteService.BrowseRemote(sourceId, path || '/');
+  },
+  async getRemoteStreamURL(sourceId, filePath) {
+    return window.go.main.RemoteService.GetRemoteStreamURL(sourceId, filePath);
+  },
+  async discoverDevices() {
+    return window.go.main.RemoteService.DiscoverDevices();
+  },
+  async quickConnect(host, port, type) {
+    return window.go.main.RemoteService.QuickConnect(host, port, type);
+  },
+  async selectKeyFile() {
+    return window.go.main.RemoteService.SelectKeyFile();
+  },
+  // Media Server
+  async startMediaServer() {
+    return window.go.main.MediaServer.Start();
+  },
+  async stopMediaServer() {
+    return window.go.main.MediaServer.Stop();
+  },
+  async mediaServerStatus() {
+    return window.go.main.MediaServer.Status();
+  },
+  async setMediaServerPort(port) {
+    return window.go.main.MediaServer.SetPort(port);
+  },
+  async setMediaServerPin(pin) {
+    return window.go.main.MediaServer.SetPin(pin);
+  },
+  // Watch state (Feature 4)
+  async markMediaWatched(id) {
+    return window.go.main.MediaService.MarkWatched(id);
+  },
+  async markMediaUnwatched(id) {
+    return window.go.main.MediaService.MarkUnwatched(id);
+  },
+  async updateResumePosition(id, posSeconds) {
+    return window.go.main.MediaService.UpdateResumePosition(id, posSeconds);
+  },
+  async getContinueWatchingMedia() {
+    return window.go.main.MediaService.GetContinueWatching();
+  },
+  async getWatchHistory() {
+    return window.go.main.MediaService.GetWatchHistory();
+  },
+  // Music (Feature 7)
+  async scanMusic() {
+    return window.go.main.MediaService.ScanMusic();
+  },
+  async getMusicLibrary() {
+    return window.go.main.MediaService.GetMusicLibrary();
+  },
+  // HW acceleration (Feature 11)
+  async detectHWAccel() {
+    return window.go.main.MediaService.DetectHWAccel();
+  },
+  // NFO export (Feature 12)
+  async writeNFO(id) {
+    return window.go.main.MediaService.WriteNFO(id);
+  },
+  // DLNA (Feature 6)
+  async startDLNA() {
+    return window.go.main.DLNAService.Start();
+  },
+  async stopDLNA() {
+    return window.go.main.DLNAService.Stop();
+  },
+  async dlnaStatus() {
+    return window.go.main.DLNAService.Status();
+  },
+  // Profiles (Feature 8)
+  async getProfiles() {
+    return window.go.main.MediaService.GetProfiles();
+  },
+  async addProfile(name, pin, avatar) {
+    return window.go.main.MediaService.AddProfile(name, pin || '', avatar || '');
+  },
+  async removeProfile(id) {
+    return window.go.main.MediaService.RemoveProfile(id);
+  },
+  // Lyrics (Feature 14)
+  async getLyrics(id) {
+    return window.go.main.MediaService.GetLyrics(id);
+  },
+  async getMediaCount() {
+    return window.go.main.MediaService.GetMediaCount();
+  },
 };
 
 async function getStreamURL() {

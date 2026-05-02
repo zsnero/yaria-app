@@ -9,6 +9,10 @@ library_service.go
 tmdb_service.go
 pro_bindings.go
 torrent_download_service.go
+media_service.go
+remote_service.go
+media_server.go
+dlna_service.go
 
 # Mantorex frontend (proprietary)
 frontend/src/css/pro.css
@@ -21,6 +25,9 @@ frontend/src/js/pages/torrent-downloads.js
 frontend/src/js/components/card.js
 frontend/src/js/components/row.js
 frontend/src/js/components/torrentlist.js
+frontend/src/js/components/modeswitcher.js
+frontend/src/js/pages/local-home.js
+frontend/src/js/pages/remote-home.js
 
 # Unused vendor libs (Video.js removed)
 frontend/src/vendor/
