@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Yaria Desktop App — Install Script
-# Usage: curl -fsSL https://yaria.xyz/install.sh | bash
+# Usage: curl -fsSL https://yaria.live/install.sh | bash
 #
 # Installs the Yaria desktop app on Linux (amd64/arm64).
 # Requires: wget or curl, tar, and root/sudo access.
@@ -16,8 +16,8 @@ BIN_LINK="/usr/local/bin/yaria-app"
 DESKTOP_FILE="/usr/share/applications/yaria.desktop"
 ICON_BASE="/usr/share/icons/hicolor"
 
-# Download from yaria.xyz (self-hosted pro binary)
-BASE_URL="https://yaria.xyz/download"
+# Download from yaria.live (self-hosted pro binary)
+BASE_URL="https://yaria.live/download"
 VERSION_URL="${BASE_URL}/latest.txt"
 
 # Colors
@@ -152,7 +152,7 @@ if [ -n "$ICON_SRC" ]; then
         fi
     done
 else
-    # Download icons from yaria.xyz
+    # Download icons from yaria.live
     warn "Icon files not found in archive. Downloading..."
     for size in 48 128 256; do
         DEST_DIR="${ICON_BASE}/${size}x${size}/apps"
@@ -197,5 +197,5 @@ echo ""
 echo -e "  Launch from your app drawer or run: ${CYAN}yaria-app${NC}"
 echo ""
 echo -e "  ${PURPLE}Activate Pro:${NC} Enter your license key in Settings"
-echo -e "  ${PURPLE}Get a key:${NC}    https://yaria.xyz"
+echo -e "  ${PURPLE}Get a key:${NC}    https://yaria.live"
 echo ""

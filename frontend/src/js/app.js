@@ -100,7 +100,7 @@ async function renderActivationGate(container) {
       <p style="color:var(--text-muted);font-size:13px;margin-bottom:40px;">This is the free version of Yaria. Mantorex features require the Pro build.</p>
       <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius);padding:28px;">
         <p style="color:var(--text-dim);font-size:14px;margin-bottom:16px;">Download Yaria Pro to unlock Mantorex</p>
-        <a href="https://yaria.xyz" target="_blank" class="btn btn-primary" style="display:inline-block;text-decoration:none;">Get Yaria Pro</a>
+        <a href="https://yaria.live" target="_blank" class="btn btn-primary" style="display:inline-block;text-decoration:none;">Get Yaria Pro</a>
       </div>
       ${hasValidKey ? '<p style="color:var(--green);font-size:12px;margin-top:16px;">You have a valid Pro license. Download the Pro build to use it.</p>' : ''}
       <div id="gate-device" style="color:var(--text-muted);font-size:11px;margin-top:12px;"></div>
@@ -119,7 +119,7 @@ async function renderActivationGate(container) {
         <div id="gate-success" style="display:none;margin-top:12px;font-size:13px;color:var(--green);"></div>
       </div>
       <p style="color:var(--text-muted);font-size:12px;margin-top:20px;">
-        Get a license at <a href="https://yaria.xyz" target="_blank" style="color:var(--accent);">yaria.xyz</a>
+        Get a license at <a href="https://yaria.live" target="_blank" style="color:var(--accent);">yaria.live</a>
       </p>
       <div id="gate-device" style="color:var(--text-muted);font-size:11px;margin-top:12px;"></div>
     `;

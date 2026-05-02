@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Yaria Desktop App — Uninstall Script
-# Usage: curl -fsSL https://yaria.xyz/uninstall.sh | bash
+# Usage: curl -fsSL https://yaria.live/uninstall.sh | bash
 #
 # Removes the Yaria desktop app from Linux.
 #

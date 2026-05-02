@@ -1,6 +1,7 @@
 # Build output
 build/
 YariaApp
+packaging/dist/
 
 # Proprietary Mantorex services (not opensource)
 search_service.go
