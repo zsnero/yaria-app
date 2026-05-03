@@ -51,6 +51,12 @@ const API = {
   async removeDownload(id) {
     return window.go.main.DownloadService.RemoveDownload(id);
   },
+  async deleteDownloadFiles(id) {
+    return window.go.main.DownloadService.DeleteDownloadFiles(id);
+  },
+  async playDownloadedFile(id) {
+    return window.go.main.DownloadService.PlayDownloadedFile(id);
+  },
   async selectDownloadDir() {
     return window.go.main.DownloadService.SelectDownloadDir();
   },
@@ -406,6 +412,19 @@ const API = {
   async getLyrics(id) {
     return window.go.main.MediaService.GetLyrics(id);
   },
+  // Updater
+  async getAppVersion() {
+    return window.go.main.UpdaterService.GetVersion();
+  },
+  async checkUpdate() {
+    return window.go.main.UpdaterService.CheckUpdate();
+  },
+  async startUpdate() {
+    return window.go.main.UpdaterService.Update();
+  },
+  async updateStatus() {
+    return window.go.main.UpdaterService.UpdateStatus();
+  },
   async getMediaCount() {
     return window.go.main.MediaService.GetMediaCount();
   },
@@ -426,3 +445,23 @@ function esc(s) {
 }
 
 const NO_POSTER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='225'%3E%3Crect fill='%231a1a2e' width='150' height='225' rx='8'/%3E%3Ctext fill='%23555570' x='75' y='112' text-anchor='middle' font-size='12' font-family='sans-serif'%3ENo Poster%3C/text%3E%3C/svg%3E";
+
+// Custom confirm dialog (replaces browser confirm())
+function appConfirm(message, onConfirm, onCancel) {
+  const overlay = document.createElement('div');
+  overlay.className = 'app-confirm-overlay';
+  overlay.innerHTML = `
+    <div class="app-confirm-modal">
+      <p class="app-confirm-msg">${esc(message)}</p>
+      <div class="app-confirm-actions">
+        <button class="btn btn-ghost" id="app-confirm-cancel">Cancel</button>
+        <button class="btn btn-primary" id="app-confirm-ok">Confirm</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#app-confirm-ok').addEventListener('click', () => { overlay.remove(); if (onConfirm) onConfirm(); });
+  overlay.querySelector('#app-confirm-cancel').addEventListener('click', () => { overlay.remove(); if (onCancel) onCancel(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); if (onCancel) onCancel(); } });
+  overlay.querySelector('#app-confirm-ok').focus();
+}

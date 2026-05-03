@@ -15,7 +15,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PROJECT_DIR="$(pwd)"
 DIST_DIR="${PROJECT_DIR}/packaging/dist"
-VERSION="1.0.0"
+# Read version from updater_service.go (single source of truth)
+VERSION=$(grep 'AppVersion' updater_service.go | head -1 | sed 's/.*= "//;s/".*//')
+if [ -z "$VERSION" ]; then
+    VERSION="1.0.0"
+    echo "Warning: could not read version from updater_service.go, using $VERSION"
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

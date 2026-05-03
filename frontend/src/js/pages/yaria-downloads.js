@@ -101,6 +101,8 @@ async function refreshDownloadList() {
 function renderDownloadItem(dl, isActive) {
   const pct = dl.percent || 0;
   const sc = getStatusClass(dl.status);
+  const sizeStr = dl.file_size > 0 ? fmtBytes(dl.file_size) : '';
+  const locStr = dl.download_dir || '';
 
   return `<div class="download-item" data-id="${esc(dl.id)}">
     ${dl.thumbnail ? `<img class="dl-item-thumb" src="${esc(dl.thumbnail)}" alt="" onerror="this.style.display='none'">` : ''}
@@ -108,19 +110,31 @@ function renderDownloadItem(dl, isActive) {
       <div class="download-item-title">${esc(dl.title || dl.url || 'Download')}</div>
       <div class="download-item-details">
         <span class="download-status ${sc}">${esc(dl.status || '').toUpperCase()}</span>
-        ${pct > 0 ? `<span class="dl-item-pct">${pct.toFixed(1)}%</span>` : ''}
+        ${pct > 0 && isActive ? `<span class="dl-item-pct">${pct.toFixed(1)}%</span>` : ''}
         ${dl.speed ? `<span class="dl-item-speed">${esc(dl.speed)}</span>` : ''}
         ${dl.eta ? `<span class="dl-item-eta">ETA: ${esc(dl.eta)}</span>` : ''}
+        ${sizeStr ? `<span class="dl-item-size">${sizeStr}</span>` : ''}
         ${dl.started_at ? `<span class="dl-item-time">${esc(dl.started_at)}</span>` : ''}
       </div>
+      ${!isActive && locStr ? `<div class="dl-item-location" title="${esc(dl.file_path || '')}">${esc(locStr)}</div>` : ''}
       ${isActive ? `<div class="download-progress-bar"><div class="download-progress-fill" style="width:${Math.min(pct,100)}%"></div></div>` : ''}
       ${dl.error ? `<div class="dl-item-error">${esc(dl.error)}</div>` : ''}
     </div>
     <div class="download-item-actions">
       ${isActive ? `<button class="btn btn-ghost btn-sm dl-cancel-btn" data-id="${esc(dl.id)}">Cancel</button>` : ''}
-      ${!isActive ? `<button class="btn btn-ghost btn-sm dl-remove-btn" data-id="${esc(dl.id)}">Remove</button>` : ''}
+      ${!isActive && dl.status === 'complete' ? `<button class="btn btn-primary btn-sm dl-play-btn" data-id="${esc(dl.id)}" title="Play"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>` : ''}
+      ${!isActive ? `<button class="btn btn-ghost btn-sm dl-remove-btn" data-id="${esc(dl.id)}" title="Remove from list">Remove</button>` : ''}
+      ${!isActive && dl.status === 'complete' ? `<button class="btn btn-ghost btn-sm dl-delete-btn" data-id="${esc(dl.id)}" title="Delete files from disk" style="color:var(--red);">Delete</button>` : ''}
     </div>
   </div>`;
+}
+
+function fmtBytes(bytes) {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return bytes + ' B';
 }
 
 function bindButtons(container) {
@@ -134,6 +148,24 @@ function bindButtons(container) {
     btn.addEventListener('click', async () => {
       await API.removeDownload(btn.dataset.id);
       refreshDownloadList();
+    });
+  });
+  container.querySelectorAll('.dl-play-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const result = await API.playDownloadedFile(btn.dataset.id);
+      if (result && result.error) {
+        btn.title = result.error;
+      }
+      setTimeout(() => { btn.disabled = false; }, 1000);
+    });
+  });
+  container.querySelectorAll('.dl-delete-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      appConfirm('Delete downloaded files from disk?', async () => {
+        await API.deleteDownloadFiles(btn.dataset.id);
+        refreshDownloadList();
+      });
     });
   });
 }

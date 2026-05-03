@@ -177,10 +177,10 @@ async function renderSettings(container) {
           <h3 class="stg-panel-title">About & Legal</h3>
           <div class="setting-group">
             <div class="setting-label">Yaria</div>
-            <div class="setting-desc" style="margin-top:6px;">
-              Yaria Desktop App v1.0.0<br>
-              Video & audio downloader + media center.
+            <div class="setting-desc" style="margin-top:6px;" id="about-version">
+              Loading version...
             </div>
+            <div id="update-section" style="margin-top:14px;"></div>
             <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
               <button class="btn btn-ghost btn-sm" id="show-privacy">Privacy Policy</button>
               <button class="btn btn-ghost btn-sm" id="show-terms">Terms of Use</button>
@@ -335,6 +335,9 @@ async function renderSettings(container) {
   // --- HW Accel ---
   loadHWAccelSection(page);
 
+  // --- Version + Update ---
+  loadUpdateSection(page);
+
   // --- Privacy Policy ---
   page.querySelector('#show-privacy').addEventListener('click', () => showLegalModal('Privacy Policy', `
 <p>Last updated: May 2026</p>
@@ -444,7 +447,12 @@ async function renderSettings(container) {
   const clearBtn = (id, type) => {
     page.querySelector(id).addEventListener('click', async () => {
       const resultDiv = page.querySelector('#cache-result');
-      if (type === 'all' && !confirm('This will delete ALL cached data. Continue?')) return;
+      if (type === 'all') {
+        const proceed = await new Promise(resolve => {
+          appConfirm('This will delete ALL cached data. Continue?', () => resolve(true), () => resolve(false));
+        });
+        if (!proceed) return;
+      }
       try {
         const result = await API.clearCache(type);
         resultDiv.style.display = 'block';
@@ -486,7 +494,10 @@ async function loadLicenseSection(page) {
         <button class="btn btn-ghost btn-sm" id="deactivate-btn" style="margin-top:12px;color:var(--red);">Deactivate License</button>
       `;
       page.querySelector('#deactivate-btn').addEventListener('click', async () => {
-        if (!confirm('Deactivate your Pro license on this device?')) return;
+        const proceed = await new Promise(resolve => {
+          appConfirm('Deactivate your Pro license on this device?', () => resolve(true), () => resolve(false));
+        });
+        if (!proceed) return;
         await API.deactivate();
         resetProCache();
         renderSettings(page.closest('#app') || page.parentElement);
@@ -670,6 +681,103 @@ async function loadHWAccelSection(page) {
   } catch(e) {
     el.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">Could not detect hardware acceleration</span>';
   }
+}
+
+async function loadUpdateSection(page) {
+  const versionEl = page.querySelector('#about-version');
+  const updateEl = page.querySelector('#update-section');
+  if (!versionEl || !updateEl) return;
+
+  try {
+    const version = await API.getAppVersion();
+    versionEl.innerHTML = `Yaria Desktop App v${esc(version)}<br>Video & audio downloader + media center.`;
+  } catch(e) {
+    versionEl.innerHTML = 'Yaria Desktop App<br>Video & audio downloader + media center.';
+  }
+
+  updateEl.innerHTML = `<button class="btn btn-ghost btn-sm" id="check-update-btn">Check for Updates</button>
+    <span id="update-status" style="font-size:13px;color:var(--text-muted);margin-left:10px;"></span>`;
+
+  updateEl.querySelector('#check-update-btn').addEventListener('click', async () => {
+    const btn = updateEl.querySelector('#check-update-btn');
+    const statusEl = updateEl.querySelector('#update-status');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    statusEl.textContent = '';
+
+    try {
+      const info = await API.checkUpdate();
+      if (info.error) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = info.error;
+        btn.textContent = 'Check for Updates';
+        btn.disabled = false;
+        return;
+      }
+
+      if (info.available) {
+        updateEl.innerHTML = `
+          <div style="font-size:13px;margin-bottom:12px;">
+            <span style="color:var(--green);font-weight:600;">Update available!</span>
+            <span style="color:var(--text-muted);">v${esc(info.current)} → v${esc(info.latest)}</span>
+          </div>
+          <button class="btn btn-primary btn-sm" id="install-update-btn">Update Now</button>
+          <div id="update-progress" style="display:none;margin-top:12px;">
+            <div class="download-progress-bar" style="margin-bottom:6px;">
+              <div class="download-progress-fill" id="update-bar" style="width:0%"></div>
+            </div>
+            <p id="update-msg" style="font-size:12px;color:var(--text-muted);"></p>
+          </div>
+        `;
+
+        updateEl.querySelector('#install-update-btn').addEventListener('click', async () => {
+          const installBtn = updateEl.querySelector('#install-update-btn');
+          const progDiv = updateEl.querySelector('#update-progress');
+          installBtn.disabled = true;
+          installBtn.textContent = 'Updating...';
+          progDiv.style.display = 'block';
+
+          await API.startUpdate();
+
+          const poll = setInterval(async () => {
+            try {
+              const s = await API.updateStatus();
+              const bar = updateEl.querySelector('#update-bar');
+              const msg = updateEl.querySelector('#update-msg');
+              if (bar) bar.style.width = (s.progress || 0) + '%';
+              if (msg) msg.textContent = s.message || '';
+
+              if (!s.updating) {
+                clearInterval(poll);
+                installBtn.style.display = 'none';
+                if (s.progress >= 100) {
+                  if (msg) {
+                    msg.style.color = 'var(--green)';
+                    msg.innerHTML = s.message + '<br><button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="location.reload()">Restart App</button>';
+                  }
+                } else if (s.message) {
+                  if (msg) msg.style.color = 'var(--red)';
+                }
+              }
+            } catch(e) {
+              clearInterval(poll);
+            }
+          }, 800);
+        });
+
+      } else {
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = 'You\'re on the latest version (v' + info.current + ')';
+        btn.textContent = 'Check for Updates';
+        btn.disabled = false;
+      }
+    } catch(e) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Check failed: ' + (e.message || '');
+      btn.textContent = 'Check for Updates';
+      btn.disabled = false;
+    }
+  });
 }
 
 async function loadMediaFolders(page) {

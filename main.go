@@ -36,6 +36,7 @@ func main() {
 	mediaService := NewMediaService()
 	remoteService := NewRemoteService()
 	mediaServer := NewMediaServer()
+	updaterService := NewUpdaterService()
 	dlnaService := NewDLNAService()
 
 	// Pro services: real implementations in pro build, stubs in free build.
@@ -55,6 +56,7 @@ func main() {
 		remoteService,
 		mediaServer,
 		dlnaService,
+		updaterService,
 	}
 	bindings = append(bindings, proServices...)
 
@@ -94,6 +96,7 @@ func main() {
 			mediaServer.startup(ctx)
 			dlnaService.LinkMediaService(mediaService)
 			dlnaService.startup(ctx)
+			updaterService.startup(ctx)
 			ProStartup(ctx, proServices)
 		},
 		OnShutdown: func(ctx context.Context) {

@@ -43,6 +43,7 @@ type activeDownload struct {
 	DownloadDir string
 	AudioOnly   bool
 	AudioFormat string
+	FilePath    string
 	// Multi-file tracking (video+audio separate downloads)
 	fileIndex   int     // 0 = first file, 1 = second file
 	fileParts   int     // total parts (usually 2 for video+audio)
@@ -285,11 +286,24 @@ func (d *DownloadService) ListFormats(rawURL string) map[string]interface{} {
 
 	var videoFmts, audioFmts []map[string]interface{}
 	for _, f := range formats {
+		// Clean up extension -- sometimes yt-dlp puts codec IDs like "MP4A.40.2"
+		ext := f.Ext
+		extLower := strings.ToLower(ext)
+		if strings.Contains(extLower, ".") && !strings.HasPrefix(extLower, "mp4") && !strings.HasPrefix(extLower, "webm") {
+			ext = "" // codec identifier, not a file extension
+		}
+		// Simplify known extensions
+		if strings.HasPrefix(extLower, "mp4") {
+			ext = "MP4"
+		} else if strings.HasPrefix(extLower, "webm") {
+			ext = "WebM"
+		}
+
 		m := map[string]interface{}{
 			"format_id":   f.ID,
 			"resolution":  fmt.Sprintf("%dp", f.Height),
 			"height":      f.Height,
-			"ext":         f.Ext,
+			"ext":         ext,
 			"is_audio":    f.IsAudio,
 			"protocol":    f.Protocol,
 			"filesize":    f.FileSize,
@@ -392,14 +406,15 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		dest = filepath.Join(home, "Downloads")
 	}
 	_ = os.MkdirAll(dest, 0755)
-	tempDir := filepath.Join(dest, ".yaria_tmp_"+id)
-	_ = os.MkdirAll(tempDir, 0755)
 
 	// Set per-download config on the shared downloader.
+	// Use the same output template as the CLI daemon:
+	// %(title)s/%(title)s.%(ext)s -- creates a folder per video
 	d.mu.Lock()
 	origRes := d.cfg.Resolution
 	origAudio := d.cfg.IsAudioOnly
 	origAudioFmt := d.cfg.AudioFormat
+	origTemplate := d.cfg.OutputTemplate
 	if resolution != "" {
 		d.cfg.Resolution = resolutionToFormat(resolution)
 	}
@@ -407,6 +422,7 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	if audioFormat != "" {
 		d.cfg.AudioFormat = audioFormat
 	}
+	d.cfg.OutputTemplate = ".%(title)s/%(title)s.%(ext)s"
 	d.mu.Unlock()
 
 	// Pipe stdout/stderr through a progress parser
@@ -420,7 +436,9 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 
 	d.updateDownload(id, "downloading", 0, "", "", "")
 
-	success, dlErr := d.dl.Download([]string{url}, tempDir)
+	// Download directly into dest -- yt-dlp creates %(title)s/ subfolder
+	// User can open the folder during download and see aria2 pieces
+	success, dlErr := d.dl.Download([]string{url}, dest)
 	pw.Close()
 
 	// Restore original config
@@ -428,6 +446,7 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	d.cfg.Resolution = origRes
 	d.cfg.IsAudioOnly = origAudio
 	d.cfg.AudioFormat = origAudioFmt
+	d.cfg.OutputTemplate = origTemplate
 	d.cfg.Stdout = nil
 	d.cfg.Stderr = nil
 	d.mu.Unlock()
@@ -435,7 +454,6 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	// Check for cancellation
 	select {
 	case <-dlCtx.Done():
-		_ = os.RemoveAll(tempDir)
 		return
 	default:
 	}
@@ -447,19 +465,34 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		}
 		errType, userMsg := classifyError(errMsg)
 		d.updateDownload(id, "error", 0, "", "", userMsg)
-		_ = errType // available for future frontend-specific handling
-		_ = os.RemoveAll(tempDir)
+		_ = errType
 		return
 	}
 
-	// Move completed files from temp to destination
-	entries, _ := os.ReadDir(tempDir)
-	for _, e := range entries {
-		src := filepath.Join(tempDir, e.Name())
-		dst := filepath.Join(dest, e.Name())
-		_ = os.Rename(src, dst)
+	// Rename hidden folder to visible: .Title/ -> Title/
+	if title != "" {
+		hiddenDir := filepath.Join(dest, "."+title)
+		visibleDir := filepath.Join(dest, title)
+		if _, err := os.Stat(hiddenDir); err == nil {
+			os.Rename(hiddenDir, visibleDir)
+		}
+
+		// Find the downloaded file
+		d.mu.Lock()
+		if ad != nil {
+			filepath.Walk(visibleDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil || info.IsDir() {
+					return nil
+				}
+				if !strings.HasSuffix(info.Name(), ".part") {
+					ad.FilePath = path
+					return filepath.SkipAll
+				}
+				return nil
+			})
+		}
+		d.mu.Unlock()
 	}
-	_ = os.RemoveAll(tempDir)
 
 	d.updateDownload(id, "complete", 100, "", "", "")
 
@@ -548,16 +581,18 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(active))
 	for _, ad := range active {
 		result = append(result, map[string]interface{}{
-			"id":         ad.ID,
-			"url":        ad.URL,
-			"title":      ad.Title,
-			"thumbnail":  ad.Thumbnail,
-			"status":     ad.Status,
-			"percent":    ad.Percent,
-			"speed":      ad.Speed,
-			"eta":        ad.ETA,
-			"error":      ad.Error,
-			"started_at": ad.StartedAt,
+			"id":           ad.ID,
+			"url":          ad.URL,
+			"title":        ad.Title,
+			"thumbnail":    ad.Thumbnail,
+			"status":       ad.Status,
+			"percent":      ad.Percent,
+			"speed":        ad.Speed,
+			"eta":          ad.ETA,
+			"error":        ad.Error,
+			"started_at":   ad.StartedAt,
+			"file_path":    ad.FilePath,
+			"download_dir": ad.DownloadDir,
 		})
 	}
 
@@ -565,15 +600,23 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 	if d.store != nil {
 		for _, r := range d.store.GetAll() {
 			if !activeIDs[r.ID] {
+				// Get directory from file path
+				dlDir := ""
+				if r.FilePath != "" {
+					dlDir = filepath.Dir(filepath.Dir(r.FilePath)) // parent of title folder
+				}
 				result = append(result, map[string]interface{}{
-					"id":         r.ID,
-					"url":        r.URL,
-					"title":      r.Title,
-					"thumbnail":  r.Thumbnail,
-					"status":     r.Status,
-					"percent":    r.Percent,
-					"error":      r.Error,
-					"started_at": r.StartedAt,
+					"id":           r.ID,
+					"url":          r.URL,
+					"title":        r.Title,
+					"thumbnail":    r.Thumbnail,
+					"status":       r.Status,
+					"percent":      r.Percent,
+					"error":        r.Error,
+					"started_at":   r.StartedAt,
+					"file_path":    r.FilePath,
+					"file_size":    r.FileSize,
+					"download_dir": dlDir,
 				})
 			}
 		}
@@ -600,6 +643,68 @@ func (d *DownloadService) RemoveDownload(id string) map[string]interface{} {
 		return map[string]interface{}{"status": "removed"}
 	}
 	return map[string]interface{}{"status": "removed"}
+}
+
+// DeleteDownloadFiles removes a download from history AND deletes the downloaded files.
+func (d *DownloadService) DeleteDownloadFiles(id string) map[string]interface{} {
+	// Get file path before removing
+	var filePath string
+	d.mu.Lock()
+	if ad, ok := d.downloads[id]; ok {
+		filePath = ad.FilePath
+	}
+	d.mu.Unlock()
+
+	// Check store if not in active downloads
+	if filePath == "" && d.store != nil {
+		if r, err := d.store.Get(id); err == nil {
+			filePath = r.FilePath
+		}
+	}
+
+	// Delete the file/folder
+	if filePath != "" {
+		// filePath points to a file inside a title folder -- delete the parent folder
+		dir := filepath.Dir(filePath)
+		if dir != "" && dir != "." && dir != "/" {
+			os.RemoveAll(dir)
+		}
+	}
+
+	// Remove from list and store
+	return d.RemoveDownload(id)
+}
+
+// PlayDownloadedFile opens the downloaded file with the system player.
+func (d *DownloadService) PlayDownloadedFile(id string) map[string]interface{} {
+	var filePath string
+	d.mu.Lock()
+	if ad, ok := d.downloads[id]; ok {
+		filePath = ad.FilePath
+	}
+	d.mu.Unlock()
+
+	if filePath == "" && d.store != nil {
+		if r, err := d.store.Get(id); err == nil {
+			filePath = r.FilePath
+		}
+	}
+
+	if filePath == "" {
+		return map[string]interface{}{"error": "file path not found"}
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		return map[string]interface{}{"error": "file not found on disk"}
+	}
+
+	// Find a media player
+	for _, name := range []string{"mpv", "vlc", "celluloid", "totem", "xdg-open"} {
+		if p, err := exec.LookPath(name); err == nil {
+			go exec.Command(p, filePath).Run()
+			return map[string]interface{}{"status": "playing", "player": name}
+		}
+	}
+	return map[string]interface{}{"error": "no media player found"}
 }
 
 // SetDownloadDir sets the default download directory.
@@ -785,6 +890,19 @@ func (d *DownloadService) updateDownload(id, status string, percent float64, spe
 	// Persist terminal states to disk
 	if status == "complete" || status == "error" || status == "cancelled" {
 		if d.store != nil {
+			filePath := ""
+			d.mu.Lock()
+			if ad, ok := d.downloads[id]; ok {
+				filePath = ad.FilePath
+			}
+			d.mu.Unlock()
+			// Get file size from disk
+			var fileSize int64
+			if filePath != "" {
+				if info, err := os.Stat(filePath); err == nil {
+					fileSize = info.Size()
+				}
+			}
 			d.store.Save(DownloadRecord{
 				ID:        id,
 				URL:       url,
@@ -794,6 +912,8 @@ func (d *DownloadService) updateDownload(id, status string, percent float64, spe
 				Percent:   percent,
 				Error:     errMsg,
 				StartedAt: startedAt,
+				FilePath:  filePath,
+				FileSize:  fileSize,
 			})
 		}
 	}
@@ -928,12 +1048,34 @@ func (d *DownloadService) parseProgress(ctx context.Context, id string, reader i
 			} else {
 				lineBuf = append(lineBuf, oneByte[0])
 			}
-		}
-		if err != nil {
+	}
+	if err != nil {
 			if len(lineBuf) > 0 {
 				processLine(string(lineBuf))
 			}
 			break
 		}
 	}
+}
+
+// copyFile copies a file from src to dst.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	if err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return out.Close()
 }

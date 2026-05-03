@@ -264,9 +264,14 @@ async function renderYariaHome(container) {
         formats.video.forEach((f, i) => {
           const key = f.resolution || f.format_id || `video-${i}`;
           const sel = selectedFormat === key ? ' selected' : '';
+          // filesize can be a string like "45.2 MiB" or a number
+          let sizeStr = '';
+          if (f.filesize && f.filesize !== '0' && f.filesize !== 0) {
+            sizeStr = typeof f.filesize === 'number' ? formatFilesize(f.filesize) : String(f.filesize);
+          }
           html += `<div class="format-card${sel}" data-format="${esc(key)}">
             <div class="format-card-label">${esc(f.resolution || f.format_note || key)}</div>
-            ${f.ext ? `<div class="format-card-ext">${esc(f.ext)}</div>` : ''}
+            <div class="format-card-ext">${sizeStr || esc(f.ext || '')}</div>
           </div>`;
         });
       } else {
@@ -315,7 +320,10 @@ async function renderYariaHome(container) {
       // Check for existing/in-progress download of the same URL
       const existing = await API.checkExistingDownload(url, downloadDir);
       if (existing && existing.exists) {
-        if (!confirm(existing.message + '\n\nDownload anyway?')) {
+        const proceed = await new Promise(resolve => {
+          appConfirm(existing.message + '\n\nDownload anyway?', () => resolve(true), () => resolve(false));
+        });
+        if (!proceed) {
           btn.textContent = 'Download';
           btn.disabled = false;
           return;

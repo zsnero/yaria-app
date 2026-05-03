@@ -23,6 +23,7 @@ type DownloadRecord struct {
 	Error     string  `json:"error,omitempty"`
 	StartedAt string  `json:"started_at"`
 	FilePath  string  `json:"file_path,omitempty"`
+	FileSize  int64   `json:"file_size,omitempty"`
 }
 
 // DownloadStore provides persistent storage for download history using BoltDB.
