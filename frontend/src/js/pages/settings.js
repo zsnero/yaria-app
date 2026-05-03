@@ -38,7 +38,7 @@ async function renderSettings(container) {
             </button>
           `).join('')}
         </div>
-        <div class="stg-version">Yaria v1.0.0</div>
+        <div class="stg-version" id="stg-version-label">Yaria</div>
       </div>
       <div class="stg-content">
         <!-- General -->
@@ -334,6 +334,12 @@ async function renderSettings(container) {
 
   // --- HW Accel ---
   loadHWAccelSection(page);
+
+  // --- Version label in sidebar ---
+  API.getAppVersion().then(v => {
+    const el = page.querySelector('#stg-version-label');
+    if (el) el.textContent = 'Yaria v' + v;
+  }).catch(() => {});
 
   // --- Version + Update ---
   loadUpdateSection(page);

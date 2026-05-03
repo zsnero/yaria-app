@@ -4,19 +4,17 @@
 # Usage: curl -fsSL https://yaria.live/install.sh | bash
 #
 # Installs the Yaria desktop app on Linux (amd64/arm64).
-# Requires: wget or curl, tar, and root/sudo access.
+# No root/sudo required -- installs to ~/.local/
 #
 
 set -euo pipefail
 
 APP_NAME="yaria"
-APP_DISPLAY="Yaria"
-INSTALL_DIR="/opt/yaria"
-BIN_LINK="/usr/local/bin/yaria-app"
-DESKTOP_FILE="/usr/share/applications/yaria.desktop"
-ICON_BASE="/usr/share/icons/hicolor"
+INSTALL_DIR="$HOME/.local/bin"
+DESKTOP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor"
 
-# Download from yaria.live (self-hosted pro binary)
+# Download from yaria.live
 BASE_URL="https://yaria.live/download"
 VERSION_URL="${BASE_URL}/latest.txt"
 
@@ -35,24 +33,9 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # --- Header ---
 echo ""
-echo -e "${PURPLE}╔══════════════════════════════════════╗${NC}"
-echo -e "${PURPLE}║${NC}     ${CYAN}Yaria Desktop App Installer${NC}     ${PURPLE}║${NC}"
-echo -e "${PURPLE}║${NC}     Video Downloader + Media Center  ${PURPLE}║${NC}"
-echo -e "${PURPLE}╚══════════════════════════════════════╝${NC}"
+echo -e "  ${PURPLE}Yaria Desktop App Installer${NC}"
+echo -e "  ${CYAN}Video Downloader + Media Center${NC}"
 echo ""
-
-# --- Check root ---
-if [ "$(id -u)" -ne 0 ]; then
-    if command -v sudo &>/dev/null; then
-        info "This script needs root access. Re-running with sudo..."
-        # When piped via curl, $0 is bash itself. Save script to temp file first.
-        SELF=$(mktemp /tmp/yaria-install.XXXXXX.sh)
-        curl -fsSL https://yaria.live/install.sh -o "$SELF"
-        exec sudo bash "$SELF" "$@"
-    else
-        error "This script must be run as root (or with sudo)."
-    fi
-fi
 
 # --- Detect architecture ---
 ARCH=$(uname -m)
@@ -88,7 +71,6 @@ fi
 DOWNLOAD_URL="${BASE_URL}/yaria-app-linux-${ARCH_SUFFIX}.tar.gz"
 
 info "Downloading Yaria ${VERSION}..."
-info "URL: ${DOWNLOAD_URL}"
 
 # --- Download and extract ---
 TMP_DIR=$(mktemp -d)
@@ -98,11 +80,10 @@ $DL_OUT "$TMP_DIR/yaria.tar.gz" "$DOWNLOAD_URL"
 info "Extracting..."
 tar -xzf "$TMP_DIR/yaria.tar.gz" -C "$TMP_DIR"
 
-# Find the binary (it might be in a subdirectory)
-BINARY=$(find "$TMP_DIR" -type f -executable \( -name "yaria-app" -o -name "YariaApp" -o -name "yaria" \) | head -1)
+# Find the binary
+BINARY=$(find "$TMP_DIR" -name "yaria-app" -type f -executable | head -1)
 if [ -z "$BINARY" ]; then
-    # Try any executable
-    BINARY=$(find "$TMP_DIR" -type f -executable ! -name "*.sh" ! -name "*.png" | head -1)
+    BINARY=$(find "$TMP_DIR" -type f -executable ! -name "*.sh" | head -1)
 fi
 
 if [ -z "$BINARY" ]; then
@@ -114,19 +95,27 @@ info "Installing to ${INSTALL_DIR}..."
 mkdir -p "$INSTALL_DIR"
 cp "$BINARY" "$INSTALL_DIR/yaria-app"
 chmod 755 "$INSTALL_DIR/yaria-app"
-
-# Create symlink
-ln -sf "$INSTALL_DIR/yaria-app" "$BIN_LINK"
 ok "Binary installed: ${INSTALL_DIR}/yaria-app"
+
+# --- Ensure ~/.local/bin is in PATH ---
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    warn "$HOME/.local/bin is not in your PATH"
+    echo ""
+    echo "  Add it by running:"
+    echo -e "    ${CYAN}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${NC}"
+    echo -e "    ${CYAN}source ~/.bashrc${NC}"
+    echo ""
+fi
 
 # --- Install desktop entry ---
 info "Installing desktop entry..."
-cat > "$DESKTOP_FILE" << 'EOF'
+mkdir -p "$DESKTOP_DIR"
+cat > "$DESKTOP_DIR/yaria.desktop" << EOF
 [Desktop Entry]
 Name=Yaria
 GenericName=Media Center & Video Downloader
 Comment=Download videos, manage local media, stream torrents, and serve to your devices
-Exec=/opt/yaria/yaria-app
+Exec=$INSTALL_DIR/yaria-app
 Icon=yaria
 Terminal=false
 Type=Application
@@ -135,30 +124,27 @@ Keywords=video;download;torrent;media;stream;
 StartupWMClass=Yaria
 MimeType=x-scheme-handler/magnet;
 EOF
-chmod 644 "$DESKTOP_FILE"
+chmod 644 "$DESKTOP_DIR/yaria.desktop"
 ok "Desktop entry installed"
 
 # --- Install icons ---
 info "Installing icons..."
 
-# Check if icons are bundled in the archive
-ICON_SRC=$(find "$TMP_DIR" -name "yaria-256.png" -o -name "icon.png" | head -1)
+ICON_SRC=$(find "$TMP_DIR" -name "yaria-256.png" | head -1)
 
 if [ -n "$ICON_SRC" ]; then
-    ICON_DIR=$(dirname "$ICON_SRC")
+    ICON_SRC_DIR=$(dirname "$ICON_SRC")
     for size in 16 32 48 64 128 256 512; do
-        ICON_FILE="${ICON_DIR}/yaria-${size}.png"
+        ICON_FILE="${ICON_SRC_DIR}/yaria-${size}.png"
         if [ -f "$ICON_FILE" ]; then
-            DEST_DIR="${ICON_BASE}/${size}x${size}/apps"
+            DEST_DIR="${ICON_DIR}/${size}x${size}/apps"
             mkdir -p "$DEST_DIR"
             cp "$ICON_FILE" "$DEST_DIR/yaria.png"
         fi
     done
 else
-    # Download icons from yaria.live
-    warn "Icon files not found in archive. Downloading..."
     for size in 48 128 256; do
-        DEST_DIR="${ICON_BASE}/${size}x${size}/apps"
+        DEST_DIR="${ICON_DIR}/${size}x${size}/apps"
         mkdir -p "$DEST_DIR"
         $DL_OUT "$DEST_DIR/yaria.png" "${BASE_URL}/icons/yaria-${size}.png" 2>/dev/null || true
     done
@@ -166,20 +152,18 @@ fi
 
 # Update icon cache
 if command -v gtk-update-icon-cache &>/dev/null; then
-    gtk-update-icon-cache -f -t "$ICON_BASE" 2>/dev/null || true
+    gtk-update-icon-cache -f -t "$ICON_DIR" 2>/dev/null || true
 fi
 if command -v update-desktop-database &>/dev/null; then
-    update-desktop-database /usr/share/applications 2>/dev/null || true
+    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 fi
 ok "Icons installed"
 
-# --- Install WebKitGTK dependency hint ---
+# --- Check WebKitGTK ---
 echo ""
 info "Checking WebKitGTK..."
-if ldconfig -p 2>/dev/null | grep -q "libwebkit2gtk-4.0"; then
+if ldconfig -p 2>/dev/null | grep -q "libwebkit2gtk-4"; then
     ok "WebKitGTK found"
-elif ldconfig -p 2>/dev/null | grep -q "libwebkit2gtk-4.1"; then
-    ok "WebKitGTK 4.1 found"
 else
     warn "WebKitGTK not detected. Yaria requires WebKitGTK to run."
     echo ""
@@ -193,9 +177,7 @@ fi
 
 # --- Done ---
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║${NC}    ${CYAN}Yaria installed successfully!${NC}     ${GREEN}║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
+echo -e "  ${GREEN}Yaria installed successfully!${NC}"
 echo ""
 echo -e "  Launch from your app drawer or run: ${CYAN}yaria-app${NC}"
 echo ""

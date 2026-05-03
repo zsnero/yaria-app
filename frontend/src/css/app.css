@@ -464,7 +464,7 @@ body { overscroll-behavior: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* === Buttons === */
-.btn { padding: 10px 24px; border-radius: 99px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: all 0.3s; outline: none; white-space: nowrap; }
+.btn { padding: 10px 24px; border-radius: 99px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.3s; outline: none; white-space: nowrap; }
 .btn-primary { background: linear-gradient(135deg, var(--accent), #7c5cef); color: #fff; box-shadow: 0 4px 20px var(--accent-glow); }
 .btn-primary:hover { background: linear-gradient(135deg, var(--accent-hover), #8b6cef); transform: translateY(-1px); box-shadow: 0 8px 32px rgba(139,108,239,0.3); }
 .btn-primary:active { transform: translateY(0); }

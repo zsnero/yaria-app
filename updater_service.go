@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	AppVersion    = "1.2.0"
+	AppVersion    = "1.2.5"
 	UpdateBaseURL = "https://yaria.live/download"
 )
 
@@ -202,31 +202,58 @@ func (u *UpdaterService) runUpdate() {
 	}
 	currentBin, _ = filepath.EvalSymlinks(currentBin)
 
-	// Replace binary: rename current -> .old, copy new -> current
+	// Try direct replace first (works if user owns the binary)
 	oldBin := currentBin + ".old"
-	os.Remove(oldBin) // remove any previous .old
-	if err := os.Rename(currentBin, oldBin); err != nil {
-		// Try with sudo/pkexec if permission denied
-		if strings.Contains(err.Error(), "permission denied") {
-			u.setStatus(85, "Requesting permission to update...")
-			if err := sudoUpdate(newBinary, currentBin); err != nil {
-				u.setStatus(0, "Update failed: "+err.Error())
-				return
-			}
-		} else {
-			u.setStatus(0, "Failed to replace binary: "+err.Error())
-			return
-		}
-	} else {
-		// Copy new binary
+	os.Remove(oldBin)
+
+	updated := false
+
+	if err := os.Rename(currentBin, oldBin); err == nil {
 		if err := copyFileForUpdate(newBinary, currentBin); err != nil {
-			// Restore old binary
 			os.Rename(oldBin, currentBin)
 			u.setStatus(0, "Failed to install new binary: "+err.Error())
 			return
 		}
-		os.Chmod(currentBin, 0o755)
+		os.Chmod(currentBin, 0755)
 		os.Remove(oldBin)
+		updated = true
+	}
+
+	// If direct replace failed, install to user-local path
+	if !updated {
+		u.setStatus(85, "Installing to user directory...")
+		home, _ := os.UserHomeDir()
+		localBin := filepath.Join(home, ".local", "bin")
+		os.MkdirAll(localBin, 0755)
+		userBinary := filepath.Join(localBin, "yaria-app")
+
+		if err := copyFileForUpdate(newBinary, userBinary); err != nil {
+			u.setStatus(0, "Failed to install: "+err.Error())
+			return
+		}
+		os.Chmod(userBinary, 0755)
+
+		// Update desktop entry to point to user binary
+		desktopFile := filepath.Join(home, ".local", "share", "applications", "yaria.desktop")
+		os.MkdirAll(filepath.Dir(desktopFile), 0755)
+		desktop := fmt.Sprintf(`[Desktop Entry]
+Name=Yaria
+GenericName=Media Center & Video Downloader
+Comment=Download videos, manage local media, stream torrents
+Exec=%s
+Icon=yaria
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Network;
+StartupWMClass=Yaria
+`, userBinary)
+		os.WriteFile(desktopFile, []byte(desktop), 0644)
+		updated = true
+	}
+
+	if !updated {
+		u.setStatus(0, "Update failed: could not replace binary")
+		return
 	}
 
 	u.setStatus(100, "Update complete! Restart the app to use the new version.")
@@ -245,18 +272,43 @@ func (u *UpdaterService) setStatus(progress int, msg string) {
 }
 
 func sudoUpdate(src, dst string) error {
-	// Try pkexec (graphical sudo) first, then sudo
-	for _, cmd := range []string{"pkexec", "sudo"} {
-		if _, err := exec.LookPath(cmd); err == nil {
-			out, err := exec.Command(cmd, "cp", src, dst).CombinedOutput()
-			if err == nil {
-				exec.Command(cmd, "chmod", "755", dst).Run()
-				return nil
-			}
-			return fmt.Errorf("%s: %s", cmd, strings.TrimSpace(string(out)))
+	// Write a small shell script that copies and sets permissions
+	script := fmt.Sprintf("#!/bin/sh\ncp '%s' '%s' && chmod 755 '%s'\n", src, dst, dst)
+	scriptPath := filepath.Join(os.TempDir(), "yaria-update.sh")
+	os.WriteFile(scriptPath, []byte(script), 0755)
+	defer os.Remove(scriptPath)
+
+	// Try pkexec with DISPLAY set for graphical prompt
+	if path, err := exec.LookPath("pkexec"); err == nil {
+		cmd := exec.Command(path, "sh", scriptPath)
+		cmd.Env = append(os.Environ(),
+			"DISPLAY="+os.Getenv("DISPLAY"),
+			"XAUTHORITY="+os.Getenv("XAUTHORITY"),
+			"WAYLAND_DISPLAY="+os.Getenv("WAYLAND_DISPLAY"),
+		)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			return nil
+		} else {
+			_ = out
 		}
 	}
-	return fmt.Errorf("permission denied and no sudo/pkexec available")
+
+	// Try sudo non-interactive
+	if path, err := exec.LookPath("sudo"); err == nil {
+		if out, err := exec.Command(path, "-n", "sh", scriptPath).CombinedOutput(); err == nil {
+			return nil
+		} else {
+			_ = out
+		}
+	}
+
+	// Try direct copy (works if user owns the install dir)
+	if err := copyFileForUpdate(src, dst); err == nil {
+		os.Chmod(dst, 0755)
+		return nil
+	}
+
+	return fmt.Errorf("permission denied - run manually:\n  sudo cp %s %s && sudo chmod 755 %s", src, dst, dst)
 }
 
 func copyFileForUpdate(src, dst string) error {

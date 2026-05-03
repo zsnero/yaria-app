@@ -111,12 +111,12 @@ async function renderActivationGate(container) {
       <h1 style="font-size:48px;font-weight:800;background:linear-gradient(135deg,#c4b5fd,#8b5cf6,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:12px;">Mantorex</h1>
       <p style="color:var(--text-dim);font-size:16px;margin-bottom:8px;">Available with Yaria Pro</p>
       <p style="color:var(--text-muted);font-size:13px;margin-bottom:40px;">Unlock all features with a Pro license</p>
-      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius);padding:28px;text-align:left;">
-        <label style="display:block;font-size:13px;font-weight:600;color:var(--text-dim);margin-bottom:8px;">Enter your Pro license key</label>
-        <input type="text" id="gate-key-input" placeholder="YARIA-XXXX-XXXX-XXXX" style="width:100%;padding:12px 16px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-sm);color:var(--text);font-size:14px;outline:none;margin-bottom:16px;">
-        <button class="btn btn-primary" id="gate-activate-btn" style="width:100%;padding:12px;font-size:14px;">Activate Pro</button>
-        <div id="gate-error" style="display:none;margin-top:12px;font-size:13px;color:var(--red);"></div>
-        <div id="gate-success" style="display:none;margin-top:12px;font-size:13px;color:var(--green);"></div>
+      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius);padding:28px;max-width:380px;margin:0 auto;">
+        <label style="display:block;font-size:13px;font-weight:600;color:var(--text-dim);margin-bottom:8px;text-align:left;">Enter your Pro license key</label>
+        <input type="text" id="gate-key-input" placeholder="YARIA-XXXX-XXXX-XXXX" style="width:100%;padding:12px 16px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-sm);color:var(--text);font-size:14px;outline:none;margin-bottom:16px;text-align:center;letter-spacing:1px;">
+        <button class="btn btn-primary" id="gate-activate-btn" style="width:100%;padding:12px;font-size:14px;text-align:center;">Activate Pro</button>
+        <div id="gate-error" style="display:none;margin-top:12px;font-size:13px;color:var(--red);text-align:center;"></div>
+        <div id="gate-success" style="display:none;margin-top:12px;font-size:13px;color:var(--green);text-align:center;"></div>
       </div>
       <p style="color:var(--text-muted);font-size:12px;margin-top:20px;">
         Get a license at <a href="https://yaria.live" target="_blank" style="color:var(--accent);">yaria.live</a>

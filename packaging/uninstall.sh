@@ -4,17 +4,20 @@
 # Usage: curl -fsSL https://yaria.live/uninstall.sh | bash
 #
 # Removes the Yaria desktop app from Linux.
+# No root/sudo required.
 #
 
 set -euo pipefail
 
-INSTALL_DIR="/opt/yaria"
-BIN_LINK="/usr/local/bin/yaria-app"
-DESKTOP_FILE="/usr/share/applications/yaria.desktop"
-ICON_BASE="/usr/share/icons/hicolor"
+INSTALL_DIR="$HOME/.local/bin"
+DESKTOP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor"
 USER_DATA_DIR="$HOME/.yaria"
 USER_CONFIG_DIR="$HOME/.config/yaria"
 MANTOREX_CONFIG_DIR="$HOME/.config/mantorex"
+
+# Also check legacy install location
+LEGACY_DIR="/opt/yaria"
 
 # Colors
 RED='\033[0;31m'
@@ -29,48 +32,52 @@ ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
 echo ""
-echo -e "${PURPLE}╔══════════════════════════════════════╗${NC}"
-echo -e "${PURPLE}║${NC}    ${CYAN}Yaria Desktop App Uninstaller${NC}    ${PURPLE}║${NC}"
-echo -e "${PURPLE}╚══════════════════════════════════════╝${NC}"
+echo -e "  ${PURPLE}Yaria Desktop App Uninstaller${NC}"
 echo ""
 
-# --- Check root ---
-if [ "$(id -u)" -ne 0 ]; then
-    if command -v sudo &>/dev/null; then
-        info "This script needs root access. Re-running with sudo..."
-        SELF=$(mktemp /tmp/yaria-uninstall.XXXXXX.sh)
-        curl -fsSL https://yaria.live/uninstall.sh -o "$SELF"
-        exec sudo bash "$SELF" "$@"
+# --- Remove binary ---
+if [ -f "$INSTALL_DIR/yaria-app" ]; then
+    rm -f "$INSTALL_DIR/yaria-app"
+    ok "Removed ${INSTALL_DIR}/yaria-app"
+else
+    info "Binary not found in ${INSTALL_DIR}"
+fi
+
+# --- Remove legacy install ---
+if [ -d "$LEGACY_DIR" ]; then
+    warn "Legacy install found at ${LEGACY_DIR}"
+    if [ -w "$LEGACY_DIR" ]; then
+        rm -rf "$LEGACY_DIR"
+        ok "Removed ${LEGACY_DIR}"
     else
-        echo -e "${RED}[ERROR]${NC} This script must be run as root (or with sudo)."
-        exit 1
+        warn "Cannot remove ${LEGACY_DIR} (run: sudo rm -rf ${LEGACY_DIR})"
     fi
 fi
 
-# --- Remove binary ---
-if [ -d "$INSTALL_DIR" ]; then
-    rm -rf "$INSTALL_DIR"
-    ok "Removed ${INSTALL_DIR}"
-else
-    info "Binary directory not found (already removed?)"
-fi
-
-# --- Remove symlink ---
-if [ -L "$BIN_LINK" ] || [ -f "$BIN_LINK" ]; then
-    rm -f "$BIN_LINK"
-    ok "Removed ${BIN_LINK}"
+# --- Remove legacy symlink ---
+if [ -L "/usr/local/bin/yaria-app" ]; then
+    if [ -w "/usr/local/bin/yaria-app" ]; then
+        rm -f "/usr/local/bin/yaria-app"
+        ok "Removed /usr/local/bin/yaria-app"
+    fi
 fi
 
 # --- Remove desktop entry ---
-if [ -f "$DESKTOP_FILE" ]; then
-    rm -f "$DESKTOP_FILE"
+if [ -f "$DESKTOP_DIR/yaria.desktop" ]; then
+    rm -f "$DESKTOP_DIR/yaria.desktop"
     ok "Removed desktop entry"
+fi
+
+# Remove legacy system desktop entry
+if [ -f "/usr/share/applications/yaria.desktop" ] && [ -w "/usr/share/applications/yaria.desktop" ]; then
+    rm -f "/usr/share/applications/yaria.desktop"
+    ok "Removed system desktop entry"
 fi
 
 # --- Remove icons ---
 REMOVED_ICONS=0
 for size in 16 32 48 64 128 256 512; do
-    ICON="${ICON_BASE}/${size}x${size}/apps/yaria.png"
+    ICON="${ICON_DIR}/${size}x${size}/apps/yaria.png"
     if [ -f "$ICON" ]; then
         rm -f "$ICON"
         REMOVED_ICONS=$((REMOVED_ICONS + 1))
@@ -82,10 +89,10 @@ fi
 
 # Update caches
 if command -v gtk-update-icon-cache &>/dev/null; then
-    gtk-update-icon-cache -f -t "$ICON_BASE" 2>/dev/null || true
+    gtk-update-icon-cache -f -t "$ICON_DIR" 2>/dev/null || true
 fi
 if command -v update-desktop-database &>/dev/null; then
-    update-desktop-database /usr/share/applications 2>/dev/null || true
+    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 fi
 
 # --- Ask about user data ---
@@ -96,7 +103,6 @@ echo "  This includes:"
 echo "    - Download history, media database, thumbnails"
 echo "    - License file, cookies cache"
 echo "    - Settings and configuration"
-echo "    - Mantorex library and torrent state"
 echo ""
 echo "  Directories:"
 echo "    ${USER_DATA_DIR}"
@@ -104,18 +110,13 @@ echo "    ${USER_CONFIG_DIR}"
 echo "    ${MANTOREX_CONFIG_DIR}"
 echo ""
 
-# Check if running non-interactively (piped from curl)
 if [ -t 0 ]; then
     read -p "  Remove user data? [y/N]: " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        # Get the actual user's home (not root's)
-        REAL_USER="${SUDO_USER:-$USER}"
-        REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-        
-        rm -rf "${REAL_HOME}/.yaria" 2>/dev/null || true
-        rm -rf "${REAL_HOME}/.config/yaria" 2>/dev/null || true
-        rm -rf "${REAL_HOME}/.config/mantorex" 2>/dev/null || true
+        rm -rf "$USER_DATA_DIR" 2>/dev/null || true
+        rm -rf "$USER_CONFIG_DIR" 2>/dev/null || true
+        rm -rf "$MANTOREX_CONFIG_DIR" 2>/dev/null || true
         ok "Removed user data"
     else
         info "User data preserved"
@@ -127,7 +128,5 @@ fi
 
 # --- Done ---
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║${NC}  ${CYAN}Yaria has been uninstalled.${NC}        ${GREEN}║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
+echo -e "  ${GREEN}Yaria has been uninstalled.${NC}"
 echo ""
