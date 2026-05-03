@@ -7,6 +7,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/hashicorp/mdns v1.0.6
 	github.com/hirochachacha/go-smb2 v1.1.0
+	github.com/jlaffaye/ftp v0.2.0
 	github.com/pkg/sftp v1.13.10
 	github.com/wailsapp/wails/v2 v2.12.0
 	go.etcd.io/bbolt v1.3.6
@@ -73,6 +74,8 @@ require (
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/hashicorp/errwrap v1.0.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/huandu/xstrings v1.3.2 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/keybase/go-keychain v0.0.1 // indirect
