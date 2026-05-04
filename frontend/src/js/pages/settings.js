@@ -408,7 +408,7 @@ async function renderSettings(container) {
 </ul>
 
 <h3>Intellectual Property</h3>
-<p>Yaria, the Yaria logo, and Mantorex are property of their respective owners. Third-party tools (yt-dlp, FFmpeg, mpv, aria2) are used under their respective open-source licenses.</p>
+<p>Yaria, the Yaria logo, and Mantorex are property of their respective owners. Third-party tools (yt-dlp, FFmpeg, aria2) are used under their respective open-source licenses.</p>
 
 <h3>Licensing</h3>
 <ul>

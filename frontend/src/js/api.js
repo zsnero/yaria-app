@@ -120,15 +120,13 @@ const API = {
     return window.go.main.CodecService.InstallCodecs();
   },
 
-  // Player (mpv/vlc fallback)
-  async detectPlayers() {
-    return window.go.main.PlayerService.DetectPlayers();
-  },
+
+  // File utilities
   async playFile(filePath) {
     return window.go.main.PlayerService.PlayFile(filePath);
   },
-  async launchPlayer(streamURL, playerName, title, resumeSeconds) {
-    return window.go.main.PlayerService.LaunchPlayer(streamURL, playerName || '', title || '', resumeSeconds || 0);
+  async openFolder(filePath) {
+    return window.go.main.PlayerService.OpenFolder(filePath);
   },
 
   // --- Pro methods (Mantorex) ---
@@ -425,6 +423,9 @@ const API = {
   async updateStatus() {
     return window.go.main.UpdaterService.UpdateStatus();
   },
+  async getLocalPageData() {
+    return window.go.main.MediaService.GetLocalPageData();
+  },
   async getMediaCount() {
     return window.go.main.MediaService.GetMediaCount();
   },
@@ -445,6 +446,7 @@ function esc(s) {
 }
 
 const NO_POSTER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='225'%3E%3Crect fill='%231a1a2e' width='150' height='225' rx='8'/%3E%3Ctext fill='%23555570' x='75' y='112' text-anchor='middle' font-size='12' font-family='sans-serif'%3ENo Poster%3C/text%3E%3C/svg%3E";
+
 
 // Custom confirm dialog (replaces browser confirm())
 function appConfirm(message, onConfirm, onCancel) {

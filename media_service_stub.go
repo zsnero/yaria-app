@@ -54,5 +54,6 @@ func (m *MediaService) AddProfile(name, pin, avatar string) map[string]interface
 func (m *MediaService) RemoveProfile(id string) map[string]interface{}        { return map[string]interface{}{"error": stubErr} }
 // Feature 14: Lyrics
 func (m *MediaService) GetLyrics(id string) map[string]interface{}            { return map[string]interface{}{"error": stubErr} }
+func (m *MediaService) GetLocalPageData() map[string]interface{}              { return map[string]interface{}{"movies": nil, "tv_shows": nil, "counts": map[string]interface{}{"total": 0}} }
 // Counts
 func (m *MediaService) GetMediaCount() map[string]interface{}                 { return map[string]interface{}{"total": 0} }
