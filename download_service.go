@@ -470,29 +470,36 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	}
 
 	// Rename hidden folder to visible: .Title/ -> Title/
-	if title != "" {
-		hiddenDir := filepath.Join(dest, "."+title)
-		visibleDir := filepath.Join(dest, title)
-		if _, err := os.Stat(hiddenDir); err == nil {
+	// yt-dlp sanitizes filenames differently from the metadata title,
+	// so scan for any dot-prefixed directory in dest instead of matching by title
+	entries, _ := os.ReadDir(dest)
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() && strings.HasPrefix(name, ".") && name != "." && name != ".." {
+			hiddenDir := filepath.Join(dest, name)
+			visibleDir := filepath.Join(dest, name[1:]) // remove leading dot
 			os.Rename(hiddenDir, visibleDir)
 		}
-
-		// Find the downloaded file
-		d.mu.Lock()
-		if ad != nil {
-			filepath.Walk(visibleDir, func(path string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() {
-					return nil
-				}
-				if !strings.HasSuffix(info.Name(), ".part") {
-					ad.FilePath = path
-					return filepath.SkipAll
-				}
-				return nil
-			})
-		}
-		d.mu.Unlock()
 	}
+
+	// Find the downloaded file
+	d.mu.Lock()
+	if ad != nil {
+		// Walk dest for the most recently modified video file
+		filepath.Walk(dest, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			isVideo := ext == ".mp4" || ext == ".mkv" || ext == ".webm" || ext == ".avi" || ext == ".mov"
+			if isVideo && !strings.HasSuffix(info.Name(), ".part") && !strings.HasPrefix(info.Name(), ".") {
+				ad.FilePath = path
+				return filepath.SkipAll
+			}
+			return nil
+		})
+	}
+	d.mu.Unlock()
 
 	d.updateDownload(id, "complete", 100, "", "", "")
 
