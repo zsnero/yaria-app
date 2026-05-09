@@ -5,12 +5,18 @@ async function renderSettings(container) {
   const page = document.createElement('div');
   page.className = 'settings-page';
 
+  // Check if pro features are available
+  let _settingsPro = false;
+  try { _settingsPro = await API.isPro(); } catch(e) {}
+
   const sections = [
     { id: 'general', label: 'General', icon: 'gear' },
     { id: 'downloader', label: 'Downloader', icon: 'download' },
-    { id: 'torrents', label: 'Torrents', icon: 'bolt' },
-    { id: 'media', label: 'Local Media', icon: 'folder' },
-    { id: 'server', label: 'Media Server', icon: 'server' },
+    ...(_settingsPro ? [
+      { id: 'torrents', label: 'Torrents', icon: 'bolt' },
+      { id: 'media', label: 'Local Media', icon: 'folder' },
+      { id: 'server', label: 'Media Server', icon: 'server' },
+    ] : []),
     { id: 'about', label: 'About', icon: 'info' },
   ];
 
@@ -101,6 +107,7 @@ async function renderSettings(container) {
         </div>
 
         <!-- Torrents -->
+        ${_settingsPro ? `
         <div class="stg-panel" data-panel="torrents">
           <h3 class="stg-panel-title">Mantorex / Torrents</h3>
           <div class="setting-group" id="codec-section">
@@ -171,6 +178,7 @@ async function renderSettings(container) {
             </div>
           </div>
         </div>
+        ` : ''}
 
         <!-- About -->
         <div class="stg-panel" data-panel="about">
@@ -431,51 +439,63 @@ async function renderSettings(container) {
 <p>For questions about these terms, visit <a href="https://yaria.live" target="_blank" style="color:var(--accent);">yaria.live</a>.</p>
   `));
 
-  // --- Cache stats ---
-  try {
-    const stats = await API.getCacheStats();
-    const statsDiv = page.querySelector('#cache-stats');
-    statsDiv.innerHTML = `
-      <div style="font-size:13px;color:var(--text-dim);line-height:1.8;">
-        <div>Partial downloads: <span style="color:var(--text)">${stats.partial_files} files</span> (${stats.partial_size})</div>
-        <div>Metadata files: <span style="color:var(--text)">${stats.meta_files} files</span> (${stats.meta_size})</div>
-        <div>Data folders: <span style="color:var(--text)">${stats.data_dirs} folders</span> (${stats.dir_size})</div>
-        <div style="margin-top:6px;font-weight:600;color:var(--text)">Total: ${stats.total_size}</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${stats.data_dir}</div>
-      </div>
-    `;
-    page.querySelector('#cache-actions').style.display = 'block';
-  } catch (err) {
-    page.querySelector('#cache-stats').innerHTML = '<span style="color:var(--text-muted);font-size:13px;">Could not load cache info</span>';
-  }
+  // --- Cache stats (pro only) ---
+  if (_settingsPro) {
+    try {
+      const stats = await API.getCacheStats();
+      const statsDiv = page.querySelector('#cache-stats');
+      if (statsDiv) {
+        statsDiv.innerHTML = `
+          <div style="font-size:13px;color:var(--text-dim);line-height:1.8;">
+            <div>Partial downloads: <span style="color:var(--text)">${stats.partial_files} files</span> (${stats.partial_size})</div>
+            <div>Metadata files: <span style="color:var(--text)">${stats.meta_files} files</span> (${stats.meta_size})</div>
+            <div>Data folders: <span style="color:var(--text)">${stats.data_dirs} folders</span> (${stats.dir_size})</div>
+            <div style="margin-top:6px;font-weight:600;color:var(--text)">Total: ${stats.total_size}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${stats.data_dir}</div>
+          </div>
+        `;
+        const actionsEl = page.querySelector('#cache-actions');
+        if (actionsEl) actionsEl.style.display = 'block';
+      }
+    } catch (err) {
+      const statsDiv = page.querySelector('#cache-stats');
+      if (statsDiv) statsDiv.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">Could not load cache info</span>';
+    }
 
-  // --- Clear buttons ---
-  const clearBtn = (id, type) => {
-    page.querySelector(id).addEventListener('click', async () => {
-      const resultDiv = page.querySelector('#cache-result');
-      if (type === 'all') {
-        const proceed = await new Promise(resolve => {
-          appConfirm('This will delete ALL cached data. Continue?', () => resolve(true), () => resolve(false));
-        });
-        if (!proceed) return;
-      }
-      try {
-        const result = await API.clearCache(type);
-        resultDiv.style.display = 'block';
-        resultDiv.style.color = 'var(--green)';
-        resultDiv.textContent = `Cleared ${result.removed} items, freed ${result.freed}`;
-        setTimeout(() => renderSettings(container), 2000);
-      } catch (err) {
-        resultDiv.style.display = 'block';
-        resultDiv.style.color = 'var(--red)';
-        resultDiv.textContent = `Failed: ${err.message}`;
-      }
-    });
-  };
-  clearBtn('#clear-partial', 'partial');
-  clearBtn('#clear-meta', 'meta');
-  clearBtn('#clear-dirs', 'dirs');
-  clearBtn('#clear-all', 'all');
+    // --- Clear buttons ---
+    const clearBtn = (id, type) => {
+      const btn = page.querySelector(id);
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const resultDiv = page.querySelector('#cache-result');
+        if (type === 'all') {
+          const proceed = await new Promise(resolve => {
+            appConfirm('This will delete ALL cached data. Continue?', () => resolve(true), () => resolve(false));
+          });
+          if (!proceed) return;
+        }
+        try {
+          const result = await API.clearCache(type);
+          if (resultDiv) {
+            resultDiv.style.display = 'block';
+            resultDiv.style.color = 'var(--green)';
+            resultDiv.textContent = `Cleared ${result.removed} items, freed ${result.freed}`;
+          }
+          setTimeout(() => renderSettings(container), 2000);
+        } catch (err) {
+          if (resultDiv) {
+            resultDiv.style.display = 'block';
+            resultDiv.style.color = 'var(--red)';
+            resultDiv.textContent = `Failed: ${err.message}`;
+          }
+        }
+      });
+    };
+    clearBtn('#clear-partial', 'partial');
+    clearBtn('#clear-meta', 'meta');
+    clearBtn('#clear-dirs', 'dirs');
+    clearBtn('#clear-all', 'all');
+  }
 }
 
 async function loadLicenseSection(page) {
