@@ -74,6 +74,16 @@ async function renderSettings(container) {
             <input type="text" class="setting-input" id="proxy-addr" placeholder="e.g. http://127.0.0.1:8080" style="display:none;">
             <div class="setting-saved" id="proxy-saved">Saved!</div>
           </div>
+          ${_isLinux ? `
+          <div class="setting-group">
+            <div class="setting-label">Video Format Filter</div>
+            <div class="setting-desc">Linux cannot reliably play HEVC/x265/10-bit video. When enabled, these formats are hidden from torrent listings. Disable to show all formats (for downloading or if you have working codec support).</div>
+            <label style="display:flex;align-items:center;gap:10px;margin-top:8px;cursor:pointer;">
+              <input type="checkbox" id="format-filter-toggle" ${localStorage.getItem('yaria_show_all_formats') === '1' ? '' : 'checked'} style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;">
+              <span style="font-size:13px;color:var(--text-dim);">Hide unplayable formats (HEVC, x265, 10-bit)</span>
+            </label>
+          </div>
+          ` : ''}
         </div>
 
         <!-- Downloader -->
@@ -289,6 +299,20 @@ async function renderSettings(container) {
     if (proxy.addr) proxyAddrEl.value = proxy.addr;
     if (proxy.type && proxy.type !== 'none') proxyAddrEl.style.display = 'block';
   } catch(e) {}
+
+  // --- Format filter toggle (Linux only) ---
+  const formatToggle = page.querySelector('#format-filter-toggle');
+  if (formatToggle) {
+    formatToggle.addEventListener('change', () => {
+      // checked = filter ON (hide unsupported) = remove the key
+      // unchecked = filter OFF (show all) = set key to '1'
+      if (formatToggle.checked) {
+        localStorage.removeItem('yaria_show_all_formats');
+      } else {
+        localStorage.setItem('yaria_show_all_formats', '1');
+      }
+    });
+  }
 
   // --- Speed limit ---
   const speedLimitEl = page.querySelector('#speed-limit');

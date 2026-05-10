@@ -447,6 +447,18 @@ function esc(s) {
 
 const NO_POSTER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='225'%3E%3Crect fill='%231a1a2e' width='150' height='225' rx='8'/%3E%3Ctext fill='%23555570' x='75' y='112' text-anchor='middle' font-size='12' font-family='sans-serif'%3ENo Poster%3C/text%3E%3C/svg%3E";
 
+// Filter out torrents with codecs that WebKitGTK cannot reliably decode.
+// Only applies on Linux (WebKitGTK) when the filter is enabled (default: on).
+// Users can disable this in Settings > General to show all formats.
+// Windows (WebView2/Chromium) and macOS (native WebKit) are unaffected.
+const _isLinux = navigator.platform.indexOf('Linux') !== -1;
+const _unsupportedRE = /\b(hevc|[hx]\.?265|10[.\-\s]?bit)\b/i;
+function filterPlayableTorrents(torrents) {
+  if (!_isLinux || !torrents || !Array.isArray(torrents)) return torrents;
+  if (localStorage.getItem('yaria_show_all_formats') === '1') return torrents;
+  return torrents.filter(t => !_unsupportedRE.test(t.title || ''));
+}
+
 
 // Custom confirm dialog (replaces browser confirm())
 function appConfirm(message, onConfirm, onCancel) {
