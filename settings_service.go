@@ -24,6 +24,10 @@ func isMetadataFile(name string) bool {
 // SettingsService provides configuration management methods to the frontend.
 type SettingsService struct{}
 
+// refreshTMDBClients is set by the pro build to refresh TMDB/Search clients when the key changes.
+// In free builds, this is a no-op.
+var refreshTMDBClients = func(key string) {}
+
 // GetTMDBKey returns the saved TMDB API key (masked for display).
 func (s *SettingsService) GetTMDBKey() map[string]interface{} {
 	key := appconfig.TMDBApiKey()
@@ -46,6 +50,8 @@ func (s *SettingsService) SaveTMDBKey(key string) map[string]interface{} {
 	if err := appconfig.SetTMDBApiKey(key); err != nil {
 		return map[string]interface{}{"error": fmt.Sprintf("failed to save: %v", err)}
 	}
+	// Notify pro services to refresh their TMDB clients with the new key
+	refreshTMDBClients(key)
 	return map[string]interface{}{"status": "saved"}
 }
 
