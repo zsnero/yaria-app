@@ -202,6 +202,79 @@ function renderDisclaimer(container) {
   });
 }
 
+// TMDB setup prompt -- shown once after disclaimer if no key configured
+function renderTMDBSetup(container) {
+  container.innerHTML = '';
+  const page = document.createElement('div');
+  page.style.cssText = 'max-width:550px;margin:0 auto;padding:60px 24px;';
+  page.innerHTML = `
+    <div style="text-align:center;margin-bottom:32px;">
+      <h1 style="font-size:28px;font-weight:700;color:var(--text);margin-bottom:8px;">Quick Setup</h1>
+      <p style="color:var(--text-dim);font-size:14px;">One optional step to unlock the full experience</p>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius);padding:28px;">
+      <h2 style="font-size:16px;font-weight:600;margin-bottom:12px;color:var(--text);">TMDB API Key</h2>
+      <p style="font-size:13px;color:var(--text-dim);line-height:1.6;margin-bottom:16px;">
+        A free TMDB API key enables <strong style="color:var(--text);">movie posters, ratings, cast info, trending content, and TV season browsing</strong>. Without it, Mantorex still works for torrent searching and streaming, but metadata and visuals will be limited.
+      </p>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;padding:12px;background:rgba(139,108,239,0.06);border-radius:6px;line-height:1.6;">
+        <strong style="color:var(--text-dim);">How to get a free key (1 minute):</strong><br>
+        1. Go to <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent);">themoviedb.org/settings/api</a><br>
+        2. Create a free account if needed<br>
+        3. Copy your API key (v3 auth)<br>
+        4. Paste it below
+      </div>
+      <input type="text" class="setting-input" id="tmdb-setup-key" placeholder="Paste your TMDB API key here" style="width:100%;padding:10px 14px;font-size:14px;margin-bottom:8px;">
+      <div id="tmdb-setup-status" style="font-size:13px;min-height:20px;"></div>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:24px;justify-content:center;">
+      <button class="btn btn-ghost" id="tmdb-skip" style="padding:10px 28px;">Skip for now</button>
+      <button class="btn btn-primary" id="tmdb-save" style="padding:10px 28px;">Save & Continue</button>
+    </div>
+    <p style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:12px;">You can always add or change this later in Settings.</p>
+  `;
+  container.appendChild(page);
+
+  const input = page.querySelector('#tmdb-setup-key');
+  const status = page.querySelector('#tmdb-setup-status');
+
+  page.querySelector('#tmdb-save').addEventListener('click', async () => {
+    const key = input.value.trim();
+    if (!key) {
+      status.style.color = 'var(--red)';
+      status.textContent = 'Please enter an API key or click Skip.';
+      return;
+    }
+    status.style.color = 'var(--text-muted)';
+    status.textContent = 'Validating...';
+    try {
+      await API.saveTMDBKey(key);
+      // Quick validation: try fetching trending
+      const test = await API.metaTrending('movie');
+      if (test && test.error && !test.results) {
+        status.style.color = 'var(--red)';
+        status.textContent = 'Key saved but validation failed. Check if the key is correct.';
+        return;
+      }
+      status.style.color = 'var(--green)';
+      status.textContent = 'Key saved!';
+      localStorage.setItem('tmdb_setup_shown', '1');
+      setTimeout(() => route(), 800);
+    } catch(e) {
+      status.style.color = 'var(--red)';
+      status.textContent = 'Failed to save: ' + (e.message || '');
+    }
+  });
+
+  page.querySelector('#tmdb-skip').addEventListener('click', () => {
+    localStorage.setItem('tmdb_setup_shown', '1');
+    route();
+  });
+
+  // Auto-focus input
+  setTimeout(() => input.focus(), 100);
+}
+
 // Route Pro pages
 function routePro(path, params) {
   // Show mode switcher on Mantorex pages (except player)
@@ -265,7 +338,7 @@ async function route() {
   }
 
   // Cleanup
-  if (typeof cleanupPlayer === 'function' && !path.startsWith('/play')) cleanupPlayer();
+  if (typeof cleanupPlayer === 'function' && !path.startsWith('/play')) cleanupPlayer(true);
   if (typeof cleanupYariaHome === 'function' && !path.startsWith('/yaria')) cleanupYariaHome();
   if (typeof cleanupYariaDownloads === 'function' && path !== '/yaria/downloads') cleanupYariaDownloads();
   if (typeof cleanupTorrentDownloads === 'function' && path !== '/torrent-downloads') cleanupTorrentDownloads();
@@ -312,6 +385,16 @@ async function route() {
     // First-time disclaimer gate
     if (!localStorage.getItem('mantorex_disclaimer_accepted')) {
       renderDisclaimer(app); return;
+    }
+    // First-time TMDB setup prompt (skippable, shown once)
+    if (!localStorage.getItem('tmdb_setup_shown')) {
+      try {
+        const tmdbInfo = await API.getTMDBKey();
+        if (!tmdbInfo || !tmdbInfo.configured) {
+          renderTMDBSetup(app); return;
+        }
+      } catch(e) {}
+      localStorage.setItem('tmdb_setup_shown', '1');
     }
     routePro(path, params);
     return;
