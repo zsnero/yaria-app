@@ -28,6 +28,8 @@ func (m *MediaService) SearchMedia(query string) []LocalMedia                 { 
 func (m *MediaService) GetMediaDetails(id string) *LocalMedia                 { return nil }
 func (m *MediaService) GetThumbnailData(id string) string                     { return "" }
 func (m *MediaService) PlayMedia(id string) map[string]interface{}            { return map[string]interface{}{"error": stubErr} }
+func (m *MediaService) ListLocalSubtitles(id string) []map[string]interface{} { return nil }
+func (m *MediaService) PrepareLocalHLS(id string) map[string]interface{}      { return map[string]interface{}{"mode": "direct"} }
 func (m *MediaService) PlayMediaExternal(id string) map[string]interface{}    { return map[string]interface{}{"error": stubErr} }
 func (m *MediaService) GetLocalStreamURL() string                             { return "" }
 func (m *MediaService) MatchTMDB(mediaID string, tmdbID int, mediaType string) map[string]interface{} { return map[string]interface{}{"error": stubErr} }

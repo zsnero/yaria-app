@@ -129,6 +129,44 @@ const API = {
     return window.go.main.PlayerService.OpenFolder(filePath);
   },
 
+  // Mpv native player
+  async mpvAvailable() {
+    return window.go.main.MpvService.IsAvailable();
+  },
+  async mpvPlay(url, title) {
+    return window.go.main.MpvService.Play(url, title || '');
+  },
+  async mpvStop() {
+    return window.go.main.MpvService.Stop();
+  },
+  async mpvTogglePause() {
+    return window.go.main.MpvService.TogglePause();
+  },
+  async mpvSeek(position) {
+    return window.go.main.MpvService.Seek(position);
+  },
+  async mpvSeekRelative(offset) {
+    return window.go.main.MpvService.SeekRelative(offset);
+  },
+  async mpvSetVolume(vol) {
+    return window.go.main.MpvService.SetVolume(vol);
+  },
+  async mpvToggleMute() {
+    return window.go.main.MpvService.ToggleMute();
+  },
+  async mpvToggleFullscreen() {
+    return window.go.main.MpvService.ToggleFullscreen();
+  },
+  async mpvGetState() {
+    return window.go.main.MpvService.GetState();
+  },
+  async mpvCycleAudio() {
+    return window.go.main.MpvService.CycleAudio();
+  },
+  async mpvCycleSub() {
+    return window.go.main.MpvService.CycleSub();
+  },
+
   // --- Pro methods (Mantorex) ---
   // These call stub services in free builds (return errors).
   // Real implementations are compiled in pro builds.
@@ -149,6 +187,30 @@ const API = {
   },
   async stopStream() {
     return window.go.main.StreamService.StopStream();
+  },
+  async getHLSURL() {
+    return window.go.main.StreamService.GetHLSURL();
+  },
+  async listSubtitleFiles() {
+    return window.go.main.StreamService.ListSubtitleFiles();
+  },
+  async getVODURL() {
+    return window.go.main.StreamService.GetVODURL();
+  },
+  async isVODActive() {
+    return window.go.main.StreamService.IsVODActive();
+  },
+  async prepareFileVOD(filePath) {
+    return window.go.main.StreamService.PrepareFileVOD(filePath);
+  },
+  async prepareStream() {
+    return window.go.main.StreamService.PrepareStream();
+  },
+  async getStreamDuration() {
+    return window.go.main.StreamService.GetStreamDuration();
+  },
+  async isHLSActive() {
+    return window.go.main.StreamService.IsHLSActive();
   },
   async pauseStream() {
     return window.go.main.StreamService.PauseStream();
@@ -289,6 +351,12 @@ const API = {
   },
   async playLocalMedia(id) {
     return window.go.main.MediaService.PlayMedia(id);
+  },
+  async listLocalSubtitles(id) {
+    return window.go.main.MediaService.ListLocalSubtitles(id);
+  },
+  async prepareLocalHLS(id) {
+    return window.go.main.MediaService.PrepareLocalHLS(id);
   },
   async playLocalMediaExternal(id) {
     return window.go.main.MediaService.PlayMediaExternal(id);
