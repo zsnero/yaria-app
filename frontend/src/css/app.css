@@ -30,13 +30,16 @@
   --radius-sm: 10px;
   --blur: blur(24px);
   --nav-h: 60px;
+  --app-font: 'Inter', sans-serif;
+  --app-font-size: 14px;
 }
 
-* { margin:0; padding:0; box-sizing:border-box; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; font-family: inherit; }
 input, textarea { -webkit-user-select: text; user-select: text; }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--app-font, 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-size: var(--app-font-size, 14px);
   font-feature-settings: 'liga' 1, 'calt' 1, 'cv01' 1, 'cv02' 1;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -853,4 +856,18 @@ select.setting-input option { background: #14141e; color: var(--text); }
   .download-meta-card { flex-direction: column; }
   .download-meta-thumb { width: 100%; height: auto; max-height: 180px; }
   .format-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+}
+
+/* UI Customization: Disable animations */
+html.no-animations *, html.no-animations *::before, html.no-animations *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* UI Customization: Disable blur/glassmorphism */
+html.no-blur * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }

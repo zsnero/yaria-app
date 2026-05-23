@@ -550,3 +550,49 @@ function appConfirm(message, onConfirm, onCancel) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); if (onCancel) onCancel(); } });
   overlay.querySelector('#app-confirm-ok').focus();
 }
+
+// --- UI Customization ---
+// Reads from localStorage and applies CSS custom properties.
+// Called on app load and when settings change.
+function applyUISettings() {
+  const root = document.documentElement;
+  const font = localStorage.getItem('yaria_ui_font') || 'Inter';
+  const size = localStorage.getItem('yaria_ui_fontsize') || '14';
+  const scale = localStorage.getItem('yaria_ui_scale') || '100';
+  const anims = localStorage.getItem('yaria_ui_animations') !== '0';
+  const blur = localStorage.getItem('yaria_ui_blur') !== '0';
+
+  root.style.setProperty('--app-font', font + ', sans-serif');
+  root.style.setProperty('--app-font-size', size + 'px');
+
+  // Combine font size and UI scale into a single zoom factor.
+  // Default font size is 14px. Zoom scales everything uniformly
+  // including hardcoded px sizes in CSS.
+  const fontZoom = parseInt(size) / 14;
+  const scaleZoom = parseInt(scale) / 100;
+  const totalZoom = fontZoom * scaleZoom;
+  if (totalZoom !== 1) {
+    document.body.style.zoom = totalZoom.toString();
+  } else {
+    document.body.style.zoom = '';
+  }
+
+  // Animations
+  if (!anims) {
+    root.style.setProperty('--transition-speed', '0s');
+    root.classList.add('no-animations');
+  } else {
+    root.style.removeProperty('--transition-speed');
+    root.classList.remove('no-animations');
+  }
+
+  // Blur/glassmorphism
+  if (!blur) {
+    root.classList.add('no-blur');
+  } else {
+    root.classList.remove('no-blur');
+  }
+}
+
+// Apply on load
+applyUISettings();

@@ -84,6 +84,58 @@ async function renderSettings(container) {
             </label>
           </div>
           ` : ''}
+          <div class="setting-group">
+            <div class="setting-label">Appearance</div>
+            <div class="setting-desc">Customize the look and feel of the app.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
+              <div>
+                <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px;">Font Family</label>
+                <select id="ui-font-family" class="setting-input" style="font-size:13px;">
+                  <option value="Inter">Inter (Default)</option>
+                  <option value="system-ui">System Default</option>
+                  <option value="'SF Pro Display', -apple-system, BlinkMacSystemFont">SF Pro (macOS)</option>
+                  <option value="'Segoe UI'">Segoe UI (Windows)</option>
+                  <option value="Roboto">Roboto</option>
+                  <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+                  <option value="'Fira Code', monospace">Fira Code</option>
+                  <option value="monospace">Monospace</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px;">Font Size</label>
+                <select id="ui-font-size" class="setting-input" style="font-size:13px;">
+                  <option value="12">Small (12px)</option>
+                  <option value="13">Compact (13px)</option>
+                  <option value="14">Default (14px)</option>
+                  <option value="15">Medium (15px)</option>
+                  <option value="16">Large (16px)</option>
+                  <option value="18">Extra Large (18px)</option>
+                </select>
+              </div>
+            </div>
+            <div style="margin-top:12px;">
+              <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px;">UI Scale</label>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <input type="range" id="ui-scale" min="75" max="150" step="5" value="100" style="flex:1;accent-color:var(--accent);">
+                <span id="ui-scale-value" style="font-size:13px;color:var(--text-dim);min-width:35px;">100%</span>
+              </div>
+            </div>
+            <div style="margin-top:12px;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="checkbox" id="ui-animations" checked style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;">
+                <span style="font-size:13px;color:var(--text-dim);">Enable animations</span>
+              </label>
+            </div>
+            <div style="margin-top:12px;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="checkbox" id="ui-blur" checked style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;">
+                <span style="font-size:13px;color:var(--text-dim);">Enable glassmorphism (blur effects)</span>
+              </label>
+            </div>
+            <div style="margin-top:16px;">
+              <button class="btn btn-ghost btn-sm" id="ui-reset" style="color:var(--red);">Reset to Defaults</button>
+            </div>
+          </div>
         </div>
 
         <!-- Downloader -->
@@ -311,6 +363,77 @@ async function renderSettings(container) {
       } else {
         localStorage.setItem('yaria_show_all_formats', '1');
       }
+    });
+  }
+
+  // --- UI Customization ---
+  const uiDefaults = { fontFamily: 'Inter', fontSize: '14', scale: '100', animations: true, blur: true };
+
+  // Load saved values
+  const savedFont = localStorage.getItem('yaria_ui_font') || uiDefaults.fontFamily;
+  const savedSize = localStorage.getItem('yaria_ui_fontsize') || uiDefaults.fontSize;
+  const savedScale = localStorage.getItem('yaria_ui_scale') || uiDefaults.scale;
+  const savedAnims = localStorage.getItem('yaria_ui_animations') !== '0';
+  const savedBlur = localStorage.getItem('yaria_ui_blur') !== '0';
+
+  const fontSelect = page.querySelector('#ui-font-family');
+  const sizeSelect = page.querySelector('#ui-font-size');
+  const scaleSlider = page.querySelector('#ui-scale');
+  const scaleValue = page.querySelector('#ui-scale-value');
+  const animToggle = page.querySelector('#ui-animations');
+  const blurToggle = page.querySelector('#ui-blur');
+  const resetBtn = page.querySelector('#ui-reset');
+
+  if (fontSelect) {
+    fontSelect.value = savedFont;
+    fontSelect.addEventListener('change', () => {
+      localStorage.setItem('yaria_ui_font', fontSelect.value);
+      applyUISettings();
+    });
+  }
+  if (sizeSelect) {
+    sizeSelect.value = savedSize;
+    sizeSelect.addEventListener('change', () => {
+      localStorage.setItem('yaria_ui_fontsize', sizeSelect.value);
+      applyUISettings();
+    });
+  }
+  if (scaleSlider) {
+    scaleSlider.value = savedScale;
+    scaleValue.textContent = savedScale + '%';
+    scaleSlider.addEventListener('input', () => {
+      scaleValue.textContent = scaleSlider.value + '%';
+      localStorage.setItem('yaria_ui_scale', scaleSlider.value);
+      applyUISettings();
+    });
+  }
+  if (animToggle) {
+    animToggle.checked = savedAnims;
+    animToggle.addEventListener('change', () => {
+      localStorage.setItem('yaria_ui_animations', animToggle.checked ? '1' : '0');
+      applyUISettings();
+    });
+  }
+  if (blurToggle) {
+    blurToggle.checked = savedBlur;
+    blurToggle.addEventListener('change', () => {
+      localStorage.setItem('yaria_ui_blur', blurToggle.checked ? '1' : '0');
+      applyUISettings();
+    });
+  }
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      localStorage.removeItem('yaria_ui_font');
+      localStorage.removeItem('yaria_ui_fontsize');
+      localStorage.removeItem('yaria_ui_scale');
+      localStorage.removeItem('yaria_ui_animations');
+      localStorage.removeItem('yaria_ui_blur');
+      if (fontSelect) fontSelect.value = uiDefaults.fontFamily;
+      if (sizeSelect) sizeSelect.value = uiDefaults.fontSize;
+      if (scaleSlider) { scaleSlider.value = uiDefaults.scale; scaleValue.textContent = '100%'; }
+      if (animToggle) animToggle.checked = true;
+      if (blurToggle) blurToggle.checked = true;
+      applyUISettings();
     });
   }
 
