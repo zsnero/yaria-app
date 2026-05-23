@@ -313,7 +313,7 @@ function routePro(path, params) {
     if (localId) {
       renderLocalPlayer(app, localId, params.get('title')||'', params.get('poster')||'');
     } else if (remoteStream) {
-      renderRemotePlayer(app, remoteStream, params.get('title')||'');
+      renderRemotePlayer(app, remoteStream, params.get('title')||'', params.get('remoteSource')||'', params.get('remotePath')||'');
     } else {
       renderPlayer(app, params.get('magnet')||'', params.get('title')||'', params.get('poster')||'');
     }

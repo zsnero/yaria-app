@@ -395,6 +395,9 @@ const API = {
   async browseRemote(sourceId, path) {
     return window.go.main.RemoteService.BrowseRemote(sourceId, path || '/');
   },
+  async listRemoteSubtitles(sourceId, filePath) {
+    return window.go.main.RemoteService.ListRemoteSubtitles(sourceId, filePath);
+  },
   async getRemoteStreamURL(sourceId, filePath) {
     return window.go.main.RemoteService.GetRemoteStreamURL(sourceId, filePath);
   },

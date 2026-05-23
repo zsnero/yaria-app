@@ -22,7 +22,8 @@ func (r *RemoteService) Disconnect(id string) map[string]interface{}            
 func (r *RemoteService) IsConnected(id string) bool                             { return false }
 func (r *RemoteService) ConnectedSources() []string                             { return nil }
 func (r *RemoteService) BrowseRemote(sourceID, path string) []RemoteFile        { return nil }
-func (r *RemoteService) GetRemoteStreamURL(sourceID, filePath string) string    { return "" }
+func (r *RemoteService) GetRemoteStreamURL(sourceID, filePath string) string                      { return "" }
+func (r *RemoteService) ListRemoteSubtitles(sourceID, filePath string) []map[string]interface{} { return nil }
 func (r *RemoteService) DiscoverDevices() []DiscoveredDevice                    { return nil }
 func (r *RemoteService) QuickConnect(host string, port int, connType string) map[string]interface{} { return map[string]interface{}{"error": stubErr} }
 func (r *RemoteService) SelectKeyFile() string                                  { return "" }
