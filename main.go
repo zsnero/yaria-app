@@ -10,6 +10,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 //go:embed all:frontend/dist
@@ -73,6 +75,23 @@ func main() {
 		StartHidden: false,
 		Linux: &linux.Options{
 			WebviewGpuPolicy: linux.WebviewGpuPolicyOnDemand,
+		},
+		Mac: &mac.Options{
+			TitleBar: mac.TitleBarHiddenInset(),
+			About: &mac.AboutInfo{
+				Title:   "Yaria",
+				Message: "Video & Audio Downloader",
+			},
+			WebviewIsTransparent: false,
+			WindowIsTranslucent:  false,
+		},
+		Windows: &windows.Options{
+			WebviewIsTransparent:              false,
+			WindowIsTranslucent:               false,
+			DisableWindowIcon:                  false,
+			DisableFramelessWindowDecorations:  false,
+			WebviewUserDataPath:                "",
+			WebviewBrowserPath:                 "",
 		},
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
