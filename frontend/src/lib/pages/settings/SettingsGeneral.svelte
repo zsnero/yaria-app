@@ -35,7 +35,7 @@
   let uiFontSize = $state(localStorage.getItem('yaria_ui_fontsize') || '14');
   let uiScale = $state(localStorage.getItem('yaria_ui_scale') || '100');
   let uiAnimations = $state(localStorage.getItem('yaria_ui_animations') !== '0');
-  let uiBlur = $state(localStorage.getItem('yaria_ui_blur') !== '0');
+  let uiBlur = $state(localStorage.getItem('yaria_ui_blur') === '1');
 
   // Font options
   const fontOptions = [
@@ -528,9 +528,6 @@
     cursor: pointer;
 
     input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      accent-color: $accent;
       cursor: pointer;
     }
 
@@ -564,7 +561,6 @@
 
     input[type="range"] {
       flex: 1;
-      accent-color: $accent;
     }
   }
 

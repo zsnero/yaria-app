@@ -46,7 +46,7 @@ export function applyUISettings() {
     fontSize: localStorage.getItem('yaria_ui_fontsize') || '14',
     scale: localStorage.getItem('yaria_ui_scale') || '100',
     animations: localStorage.getItem('yaria_ui_animations') !== '0',
-    blur: localStorage.getItem('yaria_ui_blur') !== '0',
+    blur: localStorage.getItem('yaria_ui_blur') === '1',
   };
 
   root.style.setProperty('--app-font', settings.font + ', sans-serif');

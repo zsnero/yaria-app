@@ -39,8 +39,7 @@ $tablet: 1024px;
 @mixin glass {
   background: $bg-glass;
   border: 1px solid $border-glass;
-  backdrop-filter: $blur;
-  -webkit-backdrop-filter: $blur;
+  // backdrop-filter disabled — causes rendering glitches in WebKitGTK (Wails)
 }
 
 @mixin glass-hover {

@@ -57,7 +57,7 @@ body {
   overscroll-behavior: none;
 }
 
-// Cosmic background
+// Cosmic background (static — animation causes WebKitGTK rendering glitches)
 body::before {
   content: '';
   position: fixed;
@@ -69,16 +69,18 @@ body::before {
     radial-gradient(ellipse at 70% 60%, rgba(109,40,217,0.06) 0%, transparent 40%);
   z-index: 0;
   pointer-events: none;
-  animation: nebulaPulse 20s ease-in-out infinite alternate;
-}
-
-@keyframes nebulaPulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
+  opacity: 0.85;
 }
 
 body.player-mode::before { display: none !important; }
 body.player-mode { overflow: hidden !important; }
+
+// Disable backdrop-filter when blur is off (default for WebKitGTK — causes rendering glitches)
+// Users can re-enable via Settings > General > Enable glassmorphism
+html.no-blur * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
 
 a {
   color: inherit;
@@ -92,6 +94,137 @@ button {
   color: inherit;
   font-family: inherit;
   font-size: inherit;
+}
+
+// Select dropdowns
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: $radius-sm;
+  color: $text;
+  padding: 10px 36px 10px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  transition: border-color 0.2s;
+
+  &:focus {
+    border-color: rgba($accent, 0.4);
+    box-shadow: 0 0 0 2px rgba($accent, 0.1);
+  }
+
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  option {
+    background: #1a1a2e;
+    color: $text;
+  }
+}
+
+// Checkboxes
+input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: all 0.15s;
+
+  &:checked {
+    background: $accent;
+    border-color: $accent;
+
+    &::after {
+      content: '';
+      position: absolute;
+      left: 4px;
+      top: 1px;
+      width: 6px;
+      height: 10px;
+      border: solid #fff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+  }
+
+  &:hover {
+    border-color: rgba($accent, 0.5);
+  }
+
+  &:focus {
+    box-shadow: 0 0 0 2px rgba($accent, 0.15);
+  }
+}
+
+// Number inputs
+input[type="number"] {
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: $radius-sm;
+  color: $text;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+
+  &:focus {
+    border-color: rgba($accent, 0.4);
+    box-shadow: 0 0 0 2px rgba($accent, 0.1);
+  }
+
+  &::-webkit-inner-spin-button,
+  &::-webkit-outer-spin-button {
+    opacity: 1;
+    filter: invert(0.8);
+  }
+}
+
+// Range sliders
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: $accent;
+    cursor: pointer;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    transition: background 0.15s;
+
+    &:hover {
+      background: $accent-hover;
+    }
+  }
+
+  &:focus {
+    &::-webkit-slider-thumb {
+      box-shadow: 0 0 0 3px rgba($accent, 0.2);
+    }
+  }
 }
 
 // Scrollbar
