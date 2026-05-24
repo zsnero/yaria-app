@@ -15,7 +15,7 @@ remote_service.go
 media_server.go
 dlna_service.go
 
-# Mantorex frontend (proprietary)
+# Mantorex frontend - old JS (proprietary)
 frontend/src/css/pro.css
 frontend/src/js/pages/home.js
 frontend/src/js/pages/search.js
@@ -29,15 +29,39 @@ frontend/src/js/components/torrentlist.js
 frontend/src/js/components/modeswitcher.js
 frontend/src/js/pages/local-home.js
 frontend/src/js/pages/remote-home.js
+frontend/src/js/pages/download.js
+
+# Mantorex frontend - Svelte pages (proprietary)
+frontend/src/lib/pages/MantorexHome.svelte
+frontend/src/lib/pages/SearchResults.svelte
+frontend/src/lib/pages/Detail.svelte
+frontend/src/lib/pages/Player.svelte
+frontend/src/lib/pages/Library.svelte
+frontend/src/lib/pages/LocalHome.svelte
+frontend/src/lib/pages/RemoteHome.svelte
+frontend/src/lib/pages/TorrentDownloads.svelte
+
+# Mantorex frontend - Svelte components (proprietary)
+frontend/src/lib/components/TorrentList.svelte
+frontend/src/lib/components/ModeSwitcher.svelte
+
+# App router imports pro pages (won't compile without them)
+frontend/src/App.svelte
+
+# Backup of old frontend (contains pro code)
+frontend/src_backup/
+
+# Build output and dependencies
+frontend/dist/
+frontend/node_modules/
+frontend/package-lock.json
+frontend/package.json.md5
 
 # Unused vendor libs (Video.js removed)
 frontend/src/vendor/
 
 # Wails generated bindings (auto-generated, not needed in repo)
 frontend/src/wailsjs/
-
-# Replaced stub
-frontend/src/js/pages/download.js
 
 # Editor / IDE
 .idea/

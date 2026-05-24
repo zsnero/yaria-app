@@ -12,15 +12,15 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
 )
 
-//go:embed all:frontend/src
+//go:embed all:frontend/dist
 var rawAssets embed.FS
 
 // NOTE: On Linux with older WebKitGTK, you may need the build tag:
 //   go build -tags webkit2_41
 
 func main() {
-	// Strip the "frontend/src" prefix so files are served at root
-	assets, err := fs.Sub(rawAssets, "frontend/src")
+	// Strip the "frontend/dist" prefix so files are served at root
+	assets, err := fs.Sub(rawAssets, "frontend/dist")
 	if err != nil {
 		log.Fatal("failed to create sub filesystem:", err)
 	}
