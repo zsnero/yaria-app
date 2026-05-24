@@ -38,6 +38,19 @@
   let dlMessage = $state('');
   let dlMessageColor = $state('');
 
+  // Background downloads (moved from main view when user clicks "Download Another")
+  interface BgDownload {
+    id: string;
+    title: string;
+    thumbnail: string;
+    status: string;
+    percent: number;
+    speed: string;
+    eta: string;
+    error: string;
+  }
+  let bgDownloads = $state<BgDownload[]>([]);
+
   // Cleanups
   let eventCleanups: (() => void)[] = [];
   let urlInput: HTMLInputElement | undefined = $state();
@@ -90,6 +103,7 @@
     return () => {
       eventCleanups.forEach(fn => fn());
       eventCleanups = [];
+      if (dlPollInterval) { clearInterval(dlPollInterval); dlPollInterval = null; }
     };
   });
 
@@ -98,15 +112,11 @@
     depsError = '';
     depsMessage = 'Preparing download tools...';
 
-    try {
-      const check = await api.deps.check();
-      if (check?.all_ready) {
-        depsReady = true;
-        depsMessage = '';
-        return;
-      }
-    } catch { /* continue to init */ }
-
+    // Always call DownloadService.InitDeps() to create the yt-dlp wrapper (d.dl).
+    // DepsService.CheckDeps() only checks if binaries exist on disk —
+    // it does NOT initialize the internal downloader needed for StartDownload/FetchMetadata.
+    // InitDeps() returns immediately; the goroutine finishes fast when binaries exist.
+    // Set depsReady immediately (like old JS); startDownload has error handling if d.dl isn't ready yet.
     try {
       await api.downloads.initDeps();
       depsReady = true;
@@ -117,10 +127,16 @@
   }
 
   async function loadDownloadDir() {
-    // Default download dir from last used or empty
+    // Use localStorage override if set, otherwise fetch default from Go backend
     try {
       const saved = localStorage.getItem('yaria_download_dir');
-      if (saved) downloadDir = saved;
+      if (saved) {
+        downloadDir = saved;
+        return;
+      }
+    } catch { /* ignore */ }
+    try {
+      downloadDir = await api.downloads.getDownloadDir() || '';
     } catch { /* ignore */ }
   }
 
@@ -154,11 +170,11 @@
 
   async function loadFormats(fetchUrl: string) {
     try {
-      const result = await api.downloads.getMetadata(fetchUrl);
-      if (result?.formats) {
+      const result = await api.downloads.listFormats(fetchUrl);
+      if (result && !result.error) {
         formats = {
-          video: result.formats.filter((f: any) => f.vcodec && f.vcodec !== 'none') || [],
-          audio: result.formats.filter((f: any) => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')) || [],
+          video: result.video || [],
+          audio: result.audio || [],
         };
       }
     } catch { /* ignore */ }
@@ -194,6 +210,52 @@
     }
   }
 
+  let dlPollInterval: ReturnType<typeof setInterval> | null = null;
+
+  function startPollIfNeeded() {
+    if (dlPollInterval) return; // already polling
+    dlPollInterval = setInterval(async () => {
+      try {
+        const downloads = await api.downloads.list();
+        if (!downloads) return;
+        // Build set of IDs we care about
+        const trackedIds = new Set<string>();
+        if (dlId) trackedIds.add(dlId);
+        for (const bg of bgDownloads) trackedIds.add(bg.id);
+
+        if (trackedIds.size === 0) {
+          // Nothing to track
+          if (dlPollInterval) { clearInterval(dlPollInterval); dlPollInterval = null; }
+          return;
+        }
+
+        for (const dl of downloads) {
+          if (trackedIds.has(dl.id)) {
+            updateActiveDownload(dl);
+          }
+        }
+
+        // Stop polling if all tracked downloads are terminal
+        const allDone = [...trackedIds].every(id => {
+          // Check foreground
+          if (id === dlId) {
+            const s = dlStatus.toLowerCase();
+            return s === 'complete' || s === 'error' || s === 'cancelled';
+          }
+          // Check background
+          const bg = bgDownloads.find(d => d.id === id);
+          if (bg) {
+            return bg.status === 'complete' || bg.status === 'error' || bg.status === 'cancelled';
+          }
+          return true;
+        });
+        if (allDone) {
+          if (dlPollInterval) { clearInterval(dlPollInterval); dlPollInterval = null; }
+        }
+      } catch { /* ignore */ }
+    }, 1000);
+  }
+
   async function startDownload() {
     if (!selectedFormat || !url) return;
     downloading = true;
@@ -205,9 +267,37 @@
     dlMessageColor = '';
 
     try {
+      // Check for existing/in-progress download of same URL
+      try {
+        const existing = await api.downloads.checkExistingDownload(url, downloadDir);
+        if (existing?.exists) {
+          if (!confirm((existing.message || 'Download already exists') + '\n\nDownload anyway?')) {
+            downloading = false;
+            return;
+          }
+        }
+      } catch { /* ignore check */ }
+
       const result = await api.downloads.start(url, selectedFormat, downloadDir, audioOnly, audioFormat);
+
+      // Check for error in result (e.g. "downloader not initialized")
+      if (result?.error) {
+        downloading = false;
+        fetchError = result.error;
+        return;
+      }
+
       dlId = result?.id || '';
+      if (!dlId) {
+        downloading = false;
+        fetchError = 'Download failed to start (no ID returned)';
+        return;
+      }
+
       toastSuccess('Download started');
+
+      // Start polling for progress (covers foreground + background downloads)
+      startPollIfNeeded();
     } catch (err: any) {
       downloading = false;
       fetchError = err?.message || 'Download failed to start';
@@ -215,7 +305,24 @@
   }
 
   function updateActiveDownload(data: any) {
-    if (!data?.id || (dlId && data.id !== dlId)) return;
+    if (!data?.id) return;
+
+    // Update background download if it matches
+    const bgIdx = bgDownloads.findIndex(d => d.id === data.id);
+    if (bgIdx >= 0) {
+      const bg = bgDownloads[bgIdx];
+      if (data.percent != null) bg.percent = Math.min(data.percent, 100);
+      if (data.speed) bg.speed = data.speed;
+      if (data.eta) bg.eta = data.eta;
+      if (data.status) bg.status = data.status;
+      if (data.error) bg.error = data.error;
+      if (data.title && data.title !== data.url) bg.title = data.title;
+      bgDownloads = [...bgDownloads]; // trigger reactivity
+      return;
+    }
+
+    // Update current (foreground) download
+    if (dlId && data.id !== dlId) return;
 
     if (data.percent != null) dlPercent = Math.min(data.percent, 100);
     if (data.speed) dlSpeed = data.speed;
@@ -244,6 +351,21 @@
   }
 
   function downloadAnother() {
+    // Move current download to background if it's still active
+    if (dlId && dlStatus && dlStatus !== 'COMPLETE' && dlStatus !== 'ERROR' && dlStatus !== 'CANCELLED') {
+      bgDownloads = [...bgDownloads, {
+        id: dlId,
+        title: meta?.title || url,
+        thumbnail: meta?.thumbnail || '',
+        status: dlStatus.toLowerCase(),
+        percent: dlPercent,
+        speed: dlSpeed,
+        eta: dlEta,
+        error: '',
+      }];
+    }
+
+    // Don't clear the poll — it now updates background downloads too
     meta = null;
     downloading = false;
     dlId = '';
@@ -258,6 +380,19 @@
     formats = { video: [], audio: [] };
     url = '';
     setTimeout(() => urlInput?.focus(), 50);
+  }
+
+  async function cancelBgDownload(id: string) {
+    try {
+      await api.downloads.cancel(id);
+      const bg = bgDownloads.find(d => d.id === id);
+      if (bg) bg.status = 'cancelled';
+      bgDownloads = [...bgDownloads];
+    } catch { /* ignore */ }
+  }
+
+  function dismissBgDownload(id: string) {
+    bgDownloads = bgDownloads.filter(d => d.id !== id);
   }
 
   function formatFilesize(bytes: any): string {
@@ -479,6 +614,44 @@
       </div>
     {/if}
   </div>
+
+  <!-- Background downloads -->
+  {#if bgDownloads.length > 0}
+    <div class="bg-downloads">
+      {#each bgDownloads as bg (bg.id)}
+        <div class="bg-dl-card" transition:slide={{ duration: 200 }}>
+          <div class="bg-dl-row">
+            {#if bg.thumbnail}
+              <img class="bg-dl-thumb" src={bg.thumbnail} alt="" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+            {/if}
+            <div class="bg-dl-info">
+              <div class="bg-dl-title">{bg.title}</div>
+              <div class="bg-dl-status-row">
+                <span class="download-status {getStatusClass(bg.status)}">{bg.status.toUpperCase()}</span>
+                <span class="bg-dl-pct">{bg.percent.toFixed(1)}%</span>
+                {#if bg.speed && bg.status === 'downloading'}
+                  <span class="bg-dl-speed">{bg.speed}</span>
+                {/if}
+                {#if bg.eta && bg.status === 'downloading'}
+                  <span class="bg-dl-eta">ETA: {bg.eta}</span>
+                {/if}
+              </div>
+              <div class="download-progress-bar">
+                <div class="download-progress-fill" style="width: {bg.percent}%"></div>
+              </div>
+            </div>
+            <div class="bg-dl-actions">
+              {#if bg.status === 'downloading' || bg.status === 'metadata' || bg.status === 'queued'}
+                <button class="btn btn-ghost btn-xs" onclick={() => cancelBgDownload(bg.id)} title="Cancel">x</button>
+              {:else}
+                <button class="btn btn-ghost btn-xs" onclick={() => dismissBgDownload(bg.id)} title="Dismiss">x</button>
+              {/if}
+            </div>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 {#if showFilePicker}
@@ -853,6 +1026,79 @@
     text-align: center;
     color: $text-muted;
     font-size: 14px;
+  }
+
+  // Background downloads
+  .bg-downloads {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .bg-dl-card {
+    @include glass;
+    border-radius: $radius-sm;
+    padding: 12px 16px;
+  }
+
+  .bg-dl-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .bg-dl-thumb {
+    width: 48px;
+    height: 28px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .bg-dl-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .bg-dl-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: $text;
+    @include truncate;
+    margin-bottom: 4px;
+  }
+
+  .bg-dl-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+  }
+
+  .bg-dl-pct {
+    font-size: 11px;
+    font-weight: 600;
+    color: $text;
+  }
+
+  .bg-dl-speed,
+  .bg-dl-eta {
+    font-size: 11px;
+    color: $text-dim;
+  }
+
+  .bg-dl-actions {
+    flex-shrink: 0;
+  }
+
+  .btn-xs {
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 1;
+    min-width: 24px;
   }
 
   @keyframes pageIn {

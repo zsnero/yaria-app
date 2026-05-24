@@ -12,6 +12,7 @@
   let updating = $state(false);
   let updateProgress = $state(0);
   let updateMsg = $state('');
+  let updateComplete = $state(false);
 
   // Legal modal
   let showLegal = $state(false);
@@ -130,6 +131,9 @@
         if (!s.updating) {
           clearInterval(poll);
           updating = false;
+          if (s.progress >= 100) {
+            updateComplete = true;
+          }
         }
       } catch {
         clearInterval(poll);
@@ -195,7 +199,10 @@
           <span class="text-green bold">Update available!</span>
           <span class="text-muted">v{updateInfo.current} → v{updateInfo.latest}</span>
         </div>
-        {#if !updating}
+        {#if updateComplete}
+          <p class="text-green">{updateMsg}</p>
+          <button class="btn btn-primary btn-sm" onclick={() => api.updater.restart()}>Restart Now</button>
+        {:else if !updating}
           <button class="btn btn-primary btn-sm" onclick={doUpdate}>Update Now</button>
         {:else}
           <div class="update-progress">
