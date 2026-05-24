@@ -46,7 +46,10 @@ export function applyUISettings() {
     fontSize: localStorage.getItem('yaria_ui_fontsize') || '14',
     scale: localStorage.getItem('yaria_ui_scale') || '100',
     animations: localStorage.getItem('yaria_ui_animations') !== '0',
-    blur: localStorage.getItem('yaria_ui_blur') === '1',
+    // Blur OFF by default on Linux (WebKitGTK glitches), ON elsewhere (macOS/Windows)
+    blur: localStorage.getItem('yaria_ui_blur')
+      ? localStorage.getItem('yaria_ui_blur') === '1'
+      : !navigator.platform.includes('Linux'),
   };
 
   root.style.setProperty('--app-font', settings.font + ', sans-serif');

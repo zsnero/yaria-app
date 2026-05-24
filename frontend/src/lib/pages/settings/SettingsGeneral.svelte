@@ -35,7 +35,11 @@
   let uiFontSize = $state(localStorage.getItem('yaria_ui_fontsize') || '14');
   let uiScale = $state(localStorage.getItem('yaria_ui_scale') || '100');
   let uiAnimations = $state(localStorage.getItem('yaria_ui_animations') !== '0');
-  let uiBlur = $state(localStorage.getItem('yaria_ui_blur') === '1');
+  let uiBlur = $state(
+    localStorage.getItem('yaria_ui_blur')
+      ? localStorage.getItem('yaria_ui_blur') === '1'
+      : !navigator.platform.includes('Linux')
+  );
 
   // Font options
   const fontOptions = [
