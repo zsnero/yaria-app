@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	AppVersion    = "2.2.5"
+	AppVersion    = "2.2.6"
 	UpdateBaseURL = "https://yaria.live/download"
 )
 
@@ -262,6 +262,19 @@ StartupWMClass=Yaria
 	if u.ctx != nil {
 		wailsRuntime.EventsEmit(u.ctx, "update-complete", nil)
 	}
+}
+
+// RestartApp relaunches the application binary and exits the current process.
+func (u *UpdaterService) RestartApp() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Start()
+	os.Exit(0)
 }
 
 func (u *UpdaterService) setStatus(progress int, msg string) {
