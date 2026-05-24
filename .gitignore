@@ -77,3 +77,5 @@ Thumbs.db
 .yaria/
 *.log
 cp.sh
+deploy.sh
+deploy-npm.sh
