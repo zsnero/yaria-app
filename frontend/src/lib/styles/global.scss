@@ -1,0 +1,295 @@
+@use 'variables' as *;
+
+// Font
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter.woff2') format('woff2');
+}
+
+// CSS Custom Properties (used by inline styles and some components)
+:root {
+  --app-font: 'Inter', sans-serif;
+  --app-font-size: 14px;
+  --bg: #{$bg};
+  --text: #{$text};
+  --text-dim: #{$text-dim};
+  --text-muted: #{$text-muted};
+  --accent: #{$accent};
+  --accent-hover: #{$accent-hover};
+  --accent-glow: #{$accent-glow};
+  --green: #{$green};
+  --red: #{$red};
+  --yellow: #{$yellow};
+  --cyan: #{$cyan};
+  --radius: #{$radius};
+  --radius-sm: #{$radius-sm};
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  font-family: inherit;
+}
+
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+// Smooth scrolling
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: $font-family;
+  font-size: $font-size;
+  background: $bg;
+  color: $text;
+  line-height: 1.5;
+  overflow-x: hidden;
+  min-height: 100vh;
+  overscroll-behavior: none;
+}
+
+// Cosmic background
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 15% 50%, rgba(88,28,135,0.15) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 20%, rgba(30,58,138,0.12) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 85%, rgba(21,94,117,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 60%, rgba(109,40,217,0.06) 0%, transparent 40%);
+  z-index: 0;
+  pointer-events: none;
+  animation: nebulaPulse 20s ease-in-out infinite alternate;
+}
+
+@keyframes nebulaPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+body.player-mode::before { display: none !important; }
+body.player-mode { overflow: hidden !important; }
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+// Scrollbar
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+// Buttons
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: $radius-sm;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+
+  &:active {
+    transform: translateY(1px) scale(0.98);
+  }
+
+  &-primary {
+    background: $accent;
+    color: white;
+    box-shadow: 0 2px 12px $accent-glow;
+
+    &:hover {
+      background: $accent-hover;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px rgba(139,108,239,0.3), 0 0 0 1px rgba(139,108,239,0.2);
+    }
+
+    &:active {
+      box-shadow: 0 1px 4px rgba(139,108,239,0.2);
+      transform: translateY(1px) scale(0.97);
+    }
+  }
+
+  &-ghost {
+    background: $bg-glass;
+    border: 1px solid $border-glass;
+    color: $text-dim;
+
+    &:hover {
+      background: $bg-glass-hover;
+      border-color: $border-glass-hover;
+      color: $text;
+    }
+  }
+
+  &-sm {
+    padding: 5px 12px;
+    font-size: 12px;
+  }
+}
+
+// Inputs
+.setting-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid $border-glass;
+  border-radius: 8px;
+  color: $text;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+
+  &:focus {
+    border-color: rgba($accent, 0.3);
+  }
+}
+
+// Spinner
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: $accent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+// Loading screen
+.loading-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 16px;
+  color: $text-dim;
+}
+
+// No results
+.no-results {
+  text-align: center;
+  padding: 40px;
+  color: $text-muted;
+  font-size: 14px;
+}
+
+// Nav link hover underline
+.nav-link {
+  position: relative;
+}
+.nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateX(-50%);
+}
+.nav-link:hover::after { width: 70%; }
+
+// Progress bar shimmer
+.download-progress-fill, .buffer-fill {
+  position: relative;
+  overflow: hidden;
+}
+.download-progress-fill::after, .buffer-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  animation: progressShimmer 2s ease-in-out infinite;
+}
+@keyframes progressShimmer {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+// Focus ring
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+// Typography polish
+h1, h2, h3 { letter-spacing: -0.3px; }
+h1 { line-height: 1.1; }
+h2 { line-height: 1.2; }
+::selection { background: var(--accent); color: #fff; }
+
+// Status badge pulse
+.status-downloading { animation: statusPulse 2s ease-in-out infinite; }
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+// Image loading transition
+img { transition: opacity 0.3s; }
+
+// UI Customization overrides
+html.no-animations {
+  *, *::before, *::after {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
+}
+
+html.no-blur * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+// Page transitions
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

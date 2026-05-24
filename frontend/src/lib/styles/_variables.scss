@@ -1,0 +1,67 @@
+// Yaria Design System Variables
+
+// Colors
+$bg: #050510;
+$bg-glass: rgba(255, 255, 255, 0.03);
+$bg-glass-hover: rgba(255, 255, 255, 0.06);
+$bg-glass-strong: rgba(255, 255, 255, 0.05);
+$border-glass: rgba(255, 255, 255, 0.06);
+$border-glass-hover: rgba(255, 255, 255, 0.12);
+
+$text: #e4e4f0;
+$text-dim: #8888a8;
+$text-muted: #555570;
+
+$accent: #8b6cef;
+$accent-glow: rgba(139, 108, 239, 0.25);
+$accent-hover: #a78bfa;
+
+$green: #34d399;
+$red: #f87171;
+$yellow: #fbbf24;
+$cyan: #67e8f9;
+
+// Layout
+$radius: 16px;
+$radius-sm: 10px;
+$blur: blur(24px);
+$nav-h: 60px;
+
+// Typography
+$font-family: var(--app-font, 'Inter', sans-serif);
+$font-size: var(--app-font-size, 14px);
+
+// Breakpoints
+$mobile: 768px;
+$tablet: 1024px;
+
+// Mixins
+@mixin glass {
+  background: $bg-glass;
+  border: 1px solid $border-glass;
+  backdrop-filter: $blur;
+  -webkit-backdrop-filter: $blur;
+}
+
+@mixin glass-hover {
+  background: $bg-glass-hover;
+  border-color: $border-glass-hover;
+}
+
+@mixin truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}

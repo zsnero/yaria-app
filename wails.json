@@ -2,8 +2,10 @@
   "name": "YariaApp",
   "outputfilename": "yaria-app",
   "frontend:dir": "frontend",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
   "wailsjsdir": "frontend/src",
-  "assetdir": "frontend/src",
+  "assetdir": "frontend/dist",
   "build:tags": "webkit2_41",
   "info": {
     "companyName": "Yaria",
