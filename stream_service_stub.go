@@ -38,6 +38,7 @@ func (s *StreamService) IsHLSActive() bool                                      
 func (s *StreamService) GetVODURL() string                                       { return "" }
 func (s *StreamService) IsVODActive() bool                                       { return false }
 func (s *StreamService) PrepareFileVOD(filePath string) map[string]interface{}   { return map[string]interface{}{"error": stubErr} }
+func (s *StreamService) PrepareURLVOD(streamURL string) map[string]interface{}   { return map[string]interface{}{"error": stubErr} }
 func (s *StreamService) PrepareStream() map[string]interface{}                   { return map[string]interface{}{"mode": "direct"} }
 func (s *StreamService) ListFiles() []map[string]interface{}        { return nil }
 func (s *StreamService) SelectFile(index int) map[string]interface{} { return map[string]interface{}{"error": stubErr} }
