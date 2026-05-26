@@ -287,6 +287,8 @@ export const updater = {
     call(() => wails().UpdaterService.Update()),
   getStatus: (): Promise<any> =>
     call(() => wails().UpdaterService.UpdateStatus()),
+  restart: (): Promise<void> =>
+    call(() => wails().UpdaterService.RestartApp()),
 };
 
 // === Wails Runtime Events ===
