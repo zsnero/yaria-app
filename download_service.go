@@ -39,11 +39,12 @@ type activeDownload struct {
 	cancel      context.CancelFunc
 	lastEmit    time.Time
 	pipeWriter  *io.PipeWriter
-	Resolution  string
-	DownloadDir string
-	AudioOnly   bool
-	AudioFormat string
-	FilePath    string
+	Resolution      string
+	DownloadDir     string
+	AudioOnly       bool
+	AudioFormat     string
+	ContainerFormat string
+	FilePath        string
 	// Multi-file tracking (video+audio separate downloads)
 	fileIndex   int     // 0 = first file, 1 = second file
 	fileParts   int     // total parts (usually 2 for video+audio)
@@ -327,11 +328,14 @@ func (d *DownloadService) ListFormats(rawURL string) map[string]interface{} {
 // StartDownload begins a download in a goroutine and emits progress events.
 // Returns immediately with the download ID. If the max concurrent limit is
 // reached, the download is placed in a wait queue.
-func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, audioOnly bool, audioFormat string) map[string]interface{} {
+func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, audioOnly bool, audioFormat string, containerFormat string) map[string]interface{} {
 	if d.dl == nil {
 		return map[string]interface{}{"error": "downloader not initialized"}
 	}
 	url := cleanURL(rawURL)
+	if containerFormat == "" {
+		containerFormat = "mp4"
+	}
 
 	d.mu.Lock()
 	d.nextID++
@@ -339,16 +343,17 @@ func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, 
 
 	thumb := d.getThumbnailURL(url)
 	ad := &activeDownload{
-		ID:          id,
-		URL:         url,
-		Title:       url,
-		Thumbnail:   thumb,
-		Status:      "queued",
-		StartedAt:   time.Now().Format("2006-01-02 15:04"),
-		Resolution:  resolution,
-		DownloadDir: downloadDir,
-		AudioOnly:   audioOnly,
-		AudioFormat: audioFormat,
+		ID:              id,
+		URL:             url,
+		Title:           url,
+		Thumbnail:       thumb,
+		Status:          "queued",
+		StartedAt:       time.Now().Format("2006-01-02 15:04"),
+		Resolution:      resolution,
+		DownloadDir:     downloadDir,
+		AudioOnly:       audioOnly,
+		AudioFormat:     audioFormat,
+		ContainerFormat: containerFormat,
 	}
 	d.downloads[id] = ad
 
@@ -361,7 +366,7 @@ func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, 
 	d.running++
 	d.mu.Unlock()
 
-	go d.runDownload(id, url, resolution, downloadDir, audioOnly, audioFormat)
+	go d.runDownload(id, url, resolution, downloadDir, audioOnly, audioFormat, containerFormat)
 
 	return map[string]interface{}{
 		"id":     id,
@@ -371,7 +376,7 @@ func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, 
 
 // runDownload executes the actual download in a goroutine. When finished,
 // it starts the next queued download if any.
-func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, audioOnly bool, audioFormat string) {
+func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, audioOnly bool, audioFormat string, containerFormat string) {
 	defer d.startNextQueued()
 
 	dlCtx, cancel := context.WithCancel(d.ctx)
@@ -415,6 +420,7 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	origAudio := d.cfg.IsAudioOnly
 	origAudioFmt := d.cfg.AudioFormat
 	origTemplate := d.cfg.OutputTemplate
+	origContainer := d.cfg.ContainerFormat
 	if resolution != "" {
 		d.cfg.Resolution = resolutionToFormat(resolution)
 	}
@@ -422,6 +428,7 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	if audioFormat != "" {
 		d.cfg.AudioFormat = audioFormat
 	}
+	d.cfg.ContainerFormat = containerFormat
 	d.cfg.OutputTemplate = ".%(title)s/%(title)s.%(ext)s"
 	d.mu.Unlock()
 
@@ -447,6 +454,7 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	d.cfg.IsAudioOnly = origAudio
 	d.cfg.AudioFormat = origAudioFmt
 	d.cfg.OutputTemplate = origTemplate
+	d.cfg.ContainerFormat = origContainer
 	d.cfg.Stdout = nil
 	d.cfg.Stderr = nil
 	d.mu.Unlock()
@@ -518,7 +526,7 @@ func (d *DownloadService) startNextQueued() {
 		ad, ok := d.downloads[nextID]
 		if ok && ad.Status == "queued" {
 			d.running++
-			go d.runDownload(nextID, ad.URL, ad.Resolution, ad.DownloadDir, ad.AudioOnly, ad.AudioFormat)
+			go d.runDownload(nextID, ad.URL, ad.Resolution, ad.DownloadDir, ad.AudioOnly, ad.AudioFormat, ad.ContainerFormat)
 			d.mu.Unlock()
 			return
 		}
@@ -958,24 +966,32 @@ func (d *DownloadService) parseProgress(ctx context.Context, id string, reader i
 	// Track multi-file progress (video+audio are downloaded separately)
 	fileIndex := 0
 	lastRawPercent := 0.0
+	highWaterMark := 0.0 // monotonic: overall progress never goes backwards
 
 	computeOverall := func(rawPercent float64) float64 {
-		// Detect file transition: progress drops significantly
-		if rawPercent < lastRawPercent-20 && lastRawPercent > 80 {
+		// Detect file transition: progress resets near 0 after being high
+		if rawPercent < 5 && lastRawPercent > 80 {
 			fileIndex++
 		}
 		lastRawPercent = rawPercent
 
 		// For 2-part downloads (video+audio), first file = 0-80%, second = 80-100%
 		// Video is typically 80% of total size, audio is 20%
+		var overall float64
 		switch fileIndex {
 		case 0:
-			return rawPercent * 0.8
+			overall = rawPercent * 0.8
 		case 1:
-			return 80 + rawPercent*0.2
+			overall = 80 + rawPercent*0.2
 		default:
-			return rawPercent
+			overall = rawPercent
 		}
+
+		// Never go backwards (aria2c can report fluctuating progress)
+		if overall > highWaterMark {
+			highWaterMark = overall
+		}
+		return highWaterMark
 	}
 
 	processLine := func(line string) {
