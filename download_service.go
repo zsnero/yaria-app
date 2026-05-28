@@ -399,8 +399,8 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	ad.Title = title
 	d.mu.Unlock()
 
-	// Resolve destination directory
-	dest := downloadDir
+	// Resolve destination directory (expand ~ since Go doesn't do shell expansion)
+	dest := expandTilde(downloadDir)
 	if dest == "" {
 		home, _ := os.UserHomeDir()
 		dest = filepath.Join(home, "Downloads")
@@ -722,15 +722,16 @@ func (d *DownloadService) SetDownloadDir(dir string) map[string]interface{} {
 	return map[string]interface{}{"status": "ok", "dir": dir}
 }
 
-// GetDownloadDir returns the current download directory.
+// GetDownloadDir returns the current download directory (with ~ expanded).
 func (d *DownloadService) GetDownloadDir() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.cfg.DownloadLocation != "" {
-		return d.cfg.DownloadLocation
+	loc := d.cfg.DownloadLocation
+	if loc == "" {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "Downloads")
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Downloads")
+	return expandTilde(loc)
 }
 
 // SelectDownloadDir opens a native directory picker and returns the chosen path.

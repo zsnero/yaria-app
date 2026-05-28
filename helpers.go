@@ -29,6 +29,20 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// expandTilde expands a leading ~ in a path to the user's home directory.
+// Go doesn't perform shell expansion, so "~/Videos" would create a literal "~" folder.
+func expandTilde(path string) string {
+	if path == "~" {
+		home, _ := os.UserHomeDir()
+		return home
+	}
+	if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
 // getDataDir returns the configured Mantorex data directory, expanding ~ if needed.
 // Shared between settings_service.go and stream_service.go (pro build).
 func getDataDir() string {
