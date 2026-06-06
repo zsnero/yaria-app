@@ -24,7 +24,10 @@
   let audioOnly = $state(false);
   let selectedFormat = $state('best');
   let audioFormat = $state('mp3');
+  let containerFormat = $state('mp4');
   let formats = $state<{ video: any[]; audio: any[] }>({ video: [], audio: [] });
+
+  const containerFormats = ['mp4', 'mkv', 'webm'];
 
   // Download
   let downloadDir = $state('');
@@ -64,10 +67,12 @@
       return formats.video.map((f: any, i: number) => ({
         key: f.resolution || f.format_id || `video-${i}`,
         label: f.resolution || f.format_note || f.format_id || `video-${i}`,
-        ext: formatFilesize(f.filesize) || f.ext || '',
+        // FileSize is a pre-formatted string from yt-dlp (e.g. "175.47MiB") — display as-is
+        size: typeof f.filesize === 'string' && f.filesize ? f.filesize : '',
       }));
     }
-    return defaultResolutions.map(r => ({ key: r, label: r, ext: '' }));
+    // Don't show default resolutions — just "Best" until loadFormats completes
+    return [];
   });
 
   onMount(() => {
@@ -278,7 +283,7 @@
         }
       } catch { /* ignore check */ }
 
-      const result = await api.downloads.start(url, selectedFormat, downloadDir, audioOnly, audioFormat);
+      const result = await api.downloads.start(url, selectedFormat, downloadDir, audioOnly, audioFormat, audioOnly ? '' : containerFormat);
 
       // Check for error in result (e.g. "downloader not initialized")
       if (result?.error) {
@@ -339,6 +344,9 @@
     } else if (data.status === 'metadata') {
       dlMessage = 'Fetching metadata...';
       dlMessageColor = '';
+    } else if (data.status === 'downloading' || data.status === 'processing') {
+      dlMessage = '';
+      dlMessageColor = '';
     }
   }
 
@@ -377,6 +385,7 @@
     dlMessageColor = '';
     fetchError = '';
     selectedFormat = 'best';
+    containerFormat = 'mp4';
     formats = { video: [], audio: [] };
     url = '';
     setTimeout(() => urlInput?.focus(), 50);
@@ -583,13 +592,32 @@
                   use:ripple
                 >
                   <div class="format-card-label">{opt.label}</div>
-                  {#if opt.ext}
-                    <div class="format-card-ext">{opt.ext}</div>
+                  {#if opt.size}
+                    <div class="format-card-ext">{opt.size}</div>
                   {/if}
                 </button>
               {/each}
             {/if}
           </div>
+
+          <!-- Container format (video only) -->
+          {#if !audioOnly}
+            <div class="format-header" style="margin-top:12px;">
+              <span class="format-section-title">Format</span>
+            </div>
+            <div class="format-grid">
+              {#each containerFormats as fmt}
+                <button
+                  class="format-card format-card-sm"
+                  class:selected={containerFormat === fmt}
+                  onclick={() => { containerFormat = fmt; }}
+                  use:ripple
+                >
+                  <div class="format-card-label">.{fmt}</div>
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
 
         <!-- Download dir + button -->
@@ -894,6 +922,11 @@
       background: rgba($accent, 0.15);
       border-color: rgba($accent, 0.4);
     }
+  }
+
+  .format-card-sm {
+    padding: 6px 14px;
+    min-width: 55px;
   }
 
   .format-card-label {
