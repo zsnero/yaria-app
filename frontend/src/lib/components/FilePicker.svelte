@@ -241,13 +241,16 @@
     inset: 0;
     z-index: 9999;
     @include flex-center;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    // Darker overlay since backdrop-filter blur is disabled on WebKitGTK
+    background: rgba(0, 0, 0, 0.8);
   }
 
   .fp-modal {
-    @include glass;
+    // Solid opaque background — glass mixin (3% white) is unreadable on
+    // WebKitGTK where backdrop-filter is disabled (content shows through).
+    background: #14141f;
+    border: 1px solid $border-glass-hover;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
     border-radius: $radius;
     width: 680px;
     max-width: 95vw;
