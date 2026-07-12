@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 )
@@ -37,22 +35,9 @@ func (p *PlayerService) OpenFolder(filePath string) map[string]interface{} {
 		dir = filepath.Dir(filePath)
 	}
 
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "linux":
-		cmd = exec.Command("xdg-open", dir)
-	case "darwin":
-		cmd = exec.Command("open", dir)
-	case "windows":
-		cmd = exec.Command("explorer", dir)
-	default:
-		return map[string]interface{}{"error": "unsupported platform"}
-	}
-
-	if err := cmd.Start(); err != nil {
+	if err := openFolder(dir); err != nil {
 		return map[string]interface{}{"error": "failed to open folder: " + err.Error()}
 	}
-	go cmd.Wait()
 
 	return map[string]interface{}{"status": "opened", "path": dir}
 }

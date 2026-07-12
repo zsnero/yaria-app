@@ -33,8 +33,7 @@ type DownloadStore struct {
 
 // NewDownloadStore opens (or creates) the BoltDB database at ~/.yaria/downloads.db.
 func NewDownloadStore() (*DownloadStore, error) {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".yaria")
+	dir := appDataDir()
 	os.MkdirAll(dir, 0755)
 	dbPath := filepath.Join(dir, "downloads.db")
 

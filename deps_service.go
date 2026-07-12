@@ -31,9 +31,8 @@ type DepsService struct {
 }
 
 func NewDepsService() *DepsService {
-	home, _ := os.UserHomeDir()
 	return &DepsService{
-		depsDir: filepath.Join(home, ".yaria", "dependencies"),
+		depsDir: filepath.Join(appDataDir(), "dependencies"),
 	}
 }
 
@@ -45,11 +44,7 @@ func (d *DepsService) startup(ctx context.Context) {
 // ListDirectories returns subdirectories of a given path.
 // Used by the in-app file picker.
 func (d *DepsService) ListDirectories(path string) []map[string]interface{} {
-	// Expand ~
-	if strings.HasPrefix(path, "~") {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, path[1:])
-	}
+	path = expandTilde(path)
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -76,15 +71,30 @@ func (d *DepsService) ListDirectories(path string) []map[string]interface{} {
 
 // FFmpegPath returns the path to the bundled FFmpeg binary, or empty if not installed.
 func (d *DepsService) FFmpegPath() string {
-	p := filepath.Join(d.depsDir, "ffmpeg")
-	if runtime.GOOS == "windows" {
-		p += ".exe"
-	}
+	p := filepath.Join(d.depsDir, binaryName("ffmpeg"))
 	if _, err := os.Stat(p); err == nil {
 		return p
 	}
-	// Also check system PATH
 	if path, err := exec.LookPath("ffmpeg"); err == nil {
+		return path
+	}
+	return ""
+}
+
+// FFprobePath returns the path to the bundled FFprobe binary, or empty if not installed.
+func (d *DepsService) FFprobePath() string {
+	p := filepath.Join(d.depsDir, binaryName("ffprobe"))
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	// Same directory as ffmpeg (system install or partial extract)
+	if ff := d.FFmpegPath(); ff != "" {
+		probe := filepath.Join(filepath.Dir(ff), binaryName("ffprobe"))
+		if _, err := os.Stat(probe); err == nil {
+			return probe
+		}
+	}
+	if path, err := exec.LookPath("ffprobe"); err == nil {
 		return path
 	}
 	return ""
@@ -96,7 +106,11 @@ func (d *DepsService) CheckDeps() map[string]interface{} {
 	ffmpegInstalled := ffmpegPath != ""
 
 	ytdlpInstalled := false
-	if _, err := exec.LookPath("yt-dlp"); err == nil {
+	if _, err := exec.LookPath(binaryName("yt-dlp")); err == nil {
+		ytdlpInstalled = true
+	} else if _, err := os.Stat(filepath.Join(d.depsDir, binaryName("yt-dlp"))); err == nil {
+		ytdlpInstalled = true
+	} else if _, err := exec.LookPath("yt-dlp"); err == nil {
 		ytdlpInstalled = true
 	} else if _, err := os.Stat(filepath.Join(d.depsDir, "yt-dlp")); err == nil {
 		ytdlpInstalled = true
@@ -124,20 +138,7 @@ func (d *DepsService) CheckDeps() map[string]interface{} {
 
 // GetStreamDetails extracts video/audio stream information from a file.
 func (d *DepsService) GetStreamDetails(filePath string) map[string]interface{} {
-	// ffprobe is in the same directory as ffmpeg
-	ffprobePath := ""
-	ffmpegDir := filepath.Dir(d.FFmpegPath())
-	if ffmpegDir != "" {
-		probe := filepath.Join(ffmpegDir, "ffprobe")
-		if _, err := os.Stat(probe); err == nil {
-			ffprobePath = probe
-		}
-	}
-	if ffprobePath == "" {
-		if path, err := exec.LookPath("ffprobe"); err == nil {
-			ffprobePath = path
-		}
-	}
+	ffprobePath := d.FFprobePath()
 	if ffprobePath == "" {
 		return map[string]interface{}{"error": "ffprobe not found"}
 	}
@@ -149,6 +150,7 @@ func (d *DepsService) GetStreamDetails(filePath string) map[string]interface{} {
 		"-show_format",
 		filePath,
 	)
+	hideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
@@ -244,21 +246,19 @@ func (d *DepsService) downloadFFmpeg() {
 
 	emit("extracting", 82, "Extracting FFmpeg binary...")
 
-	ffmpegBin := filepath.Join(d.depsDir, "ffmpeg")
-	if goos == "windows" {
-		ffmpegBin += ".exe"
-	}
+	ffmpegBin := filepath.Join(d.depsDir, binaryName("ffmpeg"))
+	ffprobeBin := filepath.Join(d.depsDir, binaryName("ffprobe"))
 
 	var extractErr error
 	switch {
 	case strings.HasSuffix(downloadURL, ".tar.xz"):
-		extractErr = d.extractFromTarXz(tmpFile, ffmpegBin)
+		extractErr = d.extractFFmpegTools(tmpFile, "tar.xz", ffmpegBin, ffprobeBin)
 	case strings.HasSuffix(downloadURL, ".zip"):
-		extractErr = d.extractFromZip(tmpFile, ffmpegBin)
+		extractErr = d.extractFFmpegTools(tmpFile, "zip", ffmpegBin, ffprobeBin)
 	case strings.HasSuffix(downloadURL, ".gz"):
+		// macOS static builds are single-file ffmpeg only
 		extractErr = d.extractFromGz(tmpFile, ffmpegBin)
 	default:
-		// Direct binary
 		extractErr = os.Rename(tmpFile, ffmpegBin)
 	}
 
@@ -270,82 +270,106 @@ func (d *DepsService) downloadFFmpeg() {
 	}
 
 	os.Chmod(ffmpegBin, 0755)
+	if _, err := os.Stat(ffprobeBin); err == nil {
+		os.Chmod(ffprobeBin, 0755)
+	}
 	emit("complete", 100, "FFmpeg installed!")
 }
 
-func (d *DepsService) extractFromTarXz(archivePath, destPath string) error {
-	// xz decompress -> tar extract
-	xzCmd := exec.Command("xz", "-d", "-c", archivePath)
-	stdout, err := xzCmd.StdoutPipe()
-	if err != nil {
-		return err
+// extractFFmpegTools extracts ffmpeg and ffprobe from tar.xz or zip archives.
+func (d *DepsService) extractFFmpegTools(archivePath, kind, ffmpegDest, ffprobeDest string) error {
+	want := map[string]string{
+		filepath.Base(ffmpegDest):  ffmpegDest,
+		filepath.Base(ffprobeDest): ffprobeDest,
 	}
-	if err := xzCmd.Start(); err != nil {
-		return fmt.Errorf("xz not found, install xz-utils")
-	}
+	found := map[string]bool{}
 
-	tr := tar.NewReader(stdout)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
+	extractOne := func(base string, r io.Reader) error {
+		dest, ok := want[base]
+		if !ok || found[base] {
+			return nil
 		}
+		out, err := os.Create(dest)
 		if err != nil {
-			xzCmd.Wait()
 			return err
 		}
-		base := filepath.Base(hdr.Name)
-		if base == "ffmpeg" && !hdr.FileInfo().IsDir() {
-			out, err := os.Create(destPath)
+		_, err = io.Copy(out, r)
+		out.Close()
+		if err != nil {
+			return err
+		}
+		found[base] = true
+		return nil
+	}
+
+	switch kind {
+	case "tar.xz":
+		xzCmd := exec.Command("xz", "-d", "-c", archivePath)
+		hideConsole(xzCmd)
+		stdout, err := xzCmd.StdoutPipe()
+		if err != nil {
+			return err
+		}
+		if err := xzCmd.Start(); err != nil {
+			return fmt.Errorf("xz not found, install xz-utils")
+		}
+		tr := tar.NewReader(stdout)
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
 			if err != nil {
 				xzCmd.Wait()
 				return err
 			}
-			_, err = io.Copy(out, tr)
-			out.Close()
-			xzCmd.Wait()
+			if hdr.FileInfo().IsDir() {
+				continue
+			}
+			base := filepath.Base(hdr.Name)
+			if err := extractOne(base, tr); err != nil {
+				xzCmd.Wait()
+				return err
+			}
+			if found[filepath.Base(ffmpegDest)] && found[filepath.Base(ffprobeDest)] {
+				break
+			}
+		}
+		xzCmd.Wait()
+	case "zip":
+		r, err := zipOpen(archivePath)
+		if err != nil {
 			return err
 		}
-	}
-	xzCmd.Wait()
-	return fmt.Errorf("ffmpeg binary not found in archive")
-}
-
-func (d *DepsService) extractFromZip(archivePath, destPath string) error {
-	// On Windows we need to extract ffmpeg.exe from the zip
-	// The archive structure is: ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe
-	dir := filepath.Dir(destPath)
-
-	// Try Go's archive/zip
-	r, err := zipOpen(archivePath)
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-
-	target := "ffmpeg"
-	if runtime.GOOS == "windows" {
-		target = "ffmpeg.exe"
-	}
-
-	for _, f := range r.File {
-		if filepath.Base(f.Name) == target && !f.FileInfo().IsDir() {
+		defer r.Close()
+		for _, f := range r.File {
+			if f.FileInfo().IsDir() {
+				continue
+			}
+			base := filepath.Base(f.Name)
+			if _, ok := want[base]; !ok || found[base] {
+				continue
+			}
 			rc, err := f.Open()
 			if err != nil {
 				return err
 			}
-			out, err := os.Create(filepath.Join(dir, target))
+			err = extractOne(base, rc)
+			rc.Close()
 			if err != nil {
-				rc.Close()
 				return err
 			}
-			_, err = io.Copy(out, rc)
-			out.Close()
-			rc.Close()
-			return err
+			if found[filepath.Base(ffmpegDest)] && found[filepath.Base(ffprobeDest)] {
+				break
+			}
 		}
 	}
-	return fmt.Errorf("ffmpeg not found in zip archive")
+
+	if !found[filepath.Base(ffmpegDest)] {
+		return fmt.Errorf("ffmpeg binary not found in archive")
+	}
+	// ffprobe is optional for macOS single-binary builds; required when present in archive
+	return nil
 }
 
 func (d *DepsService) extractFromGz(archivePath, destPath string) error {

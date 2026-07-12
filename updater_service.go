@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -19,7 +20,7 @@ import (
 )
 
 const (
-	AppVersion    = "2.3.4"
+	AppVersion    = "2.3.5"
 	UpdateBaseURL = "https://yaria.live/download"
 )
 
@@ -98,6 +99,28 @@ func (u *UpdaterService) UpdateStatus() map[string]interface{} {
 	}
 }
 
+func updateArch() string {
+	switch runtime.GOARCH {
+	case "arm64":
+		return "arm64"
+	default:
+		return "amd64"
+	}
+}
+
+// updatePackageURL returns the download URL for the current platform package.
+func updatePackageURL() string {
+	arch := updateArch()
+	switch runtime.GOOS {
+	case "windows":
+		return fmt.Sprintf("%s/yaria-app-windows-%s.zip", UpdateBaseURL, arch)
+	case "darwin":
+		return fmt.Sprintf("%s/yaria-app-darwin-%s.tar.gz", UpdateBaseURL, arch)
+	default:
+		return fmt.Sprintf("%s/yaria-app-linux-%s.tar.gz", UpdateBaseURL, arch)
+	}
+}
+
 func (u *UpdaterService) runUpdate() {
 	defer func() {
 		u.mu.Lock()
@@ -105,17 +128,9 @@ func (u *UpdaterService) runUpdate() {
 		u.mu.Unlock()
 	}()
 
-	// Determine architecture
-	arch := "amd64"
-	if runtime.GOARCH == "arm64" {
-		arch = "arm64"
-	}
-
-	downloadURL := fmt.Sprintf("%s/yaria-app-linux-%s.tar.gz", UpdateBaseURL, arch)
-
+	downloadURL := updatePackageURL()
 	u.setStatus(5, "Downloading update...")
 
-	// Download to temp file
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(downloadURL)
 	if err != nil {
@@ -129,7 +144,12 @@ func (u *UpdaterService) runUpdate() {
 		return
 	}
 
-	tmpFile, err := os.CreateTemp("", "yaria-update-*.tar.gz")
+	isZip := strings.HasSuffix(downloadURL, ".zip")
+	suffix := "*.tar.gz"
+	if isZip {
+		suffix = "*.zip"
+	}
+	tmpFile, err := os.CreateTemp("", "yaria-update-"+suffix)
 	if err != nil {
 		u.setStatus(0, "Failed to create temp file")
 		return
@@ -137,7 +157,6 @@ func (u *UpdaterService) runUpdate() {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	// Download with progress
 	totalSize := resp.ContentLength
 	var downloaded int64
 	buf := make([]byte, 64*1024)
@@ -147,7 +166,7 @@ func (u *UpdaterService) runUpdate() {
 			tmpFile.Write(buf[:n])
 			downloaded += int64(n)
 			if totalSize > 0 {
-				pct := int(float64(downloaded) / float64(totalSize) * 70) // 0-70% for download
+				pct := int(float64(downloaded) / float64(totalSize) * 70)
 				u.setStatus(5+pct, fmt.Sprintf("Downloading... %s / %s",
 					formatUpdateBytes(downloaded), formatUpdateBytes(totalSize)))
 			}
@@ -160,7 +179,6 @@ func (u *UpdaterService) runUpdate() {
 
 	u.setStatus(75, "Extracting update...")
 
-	// Extract tarball
 	tmpDir, err := os.MkdirTemp("", "yaria-update-extract-")
 	if err != nil {
 		u.setStatus(0, "Failed to create extract directory")
@@ -168,25 +186,19 @@ func (u *UpdaterService) runUpdate() {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := extractTarGz(tmpPath, tmpDir); err != nil {
-		u.setStatus(0, "Extract failed: "+err.Error())
-		return
+	if isZip {
+		if err := extractZip(tmpPath, tmpDir); err != nil {
+			u.setStatus(0, "Extract failed: "+err.Error())
+			return
+		}
+	} else {
+		if err := extractTarGz(tmpPath, tmpDir); err != nil {
+			u.setStatus(0, "Extract failed: "+err.Error())
+			return
+		}
 	}
 
-	// Find the new binary
-	var newBinary string
-	filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		name := info.Name()
-		if name == "yaria-app" || name == "YariaApp" {
-			newBinary = path
-			return filepath.SkipAll
-		}
-		return nil
-	})
-
+	newBinary := findUpdateBinary(tmpDir)
 	if newBinary == "" {
 		u.setStatus(0, "Binary not found in update package")
 		return
@@ -194,7 +206,6 @@ func (u *UpdaterService) runUpdate() {
 
 	u.setStatus(85, "Installing update...")
 
-	// Get current binary path
 	currentBin, err := os.Executable()
 	if err != nil {
 		u.setStatus(0, "Could not determine current binary path")
@@ -202,41 +213,101 @@ func (u *UpdaterService) runUpdate() {
 	}
 	currentBin, _ = filepath.EvalSymlinks(currentBin)
 
-	// Try direct replace first (works if user owns the binary)
+	if err := installUpdateBinary(newBinary, currentBin); err != nil {
+		u.setStatus(0, "Failed to install: "+err.Error())
+		return
+	}
+
+	u.setStatus(100, "Update complete! Restart the app to use the new version.")
+
+	if u.ctx != nil {
+		wailsRuntime.EventsEmit(u.ctx, "update-complete", nil)
+	}
+}
+
+// findUpdateBinary locates the app binary inside an extracted update package.
+func findUpdateBinary(root string) string {
+	names := map[string]bool{
+		"yaria-app":     true,
+		"YariaApp":      true,
+		"yaria-app.exe": true,
+		"YariaApp.exe":  true,
+	}
+	var found string
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if names[info.Name()] {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// installUpdateBinary replaces the running binary, with platform-specific fallbacks.
+func installUpdateBinary(newBinary, currentBin string) error {
+	// On Windows, a running .exe cannot always be overwritten; rename then copy.
 	oldBin := currentBin + ".old"
 	os.Remove(oldBin)
-
-	updated := false
 
 	if err := os.Rename(currentBin, oldBin); err == nil {
 		if err := copyFileForUpdate(newBinary, currentBin); err != nil {
 			os.Rename(oldBin, currentBin)
-			u.setStatus(0, "Failed to install new binary: "+err.Error())
-			return
+			return err
 		}
 		os.Chmod(currentBin, 0755)
+		// Best-effort cleanup; Windows may keep the lock until exit
 		os.Remove(oldBin)
-		updated = true
+		return nil
 	}
 
-	// If direct replace failed, install to user-local path
-	if !updated {
-		u.setStatus(85, "Installing to user directory...")
-		home, _ := os.UserHomeDir()
-		localBin := filepath.Join(home, ".local", "bin")
-		os.MkdirAll(localBin, 0755)
-		userBinary := filepath.Join(localBin, "yaria-app")
+	// Fallback: install to a user-writable location
+	userBin, err := userInstallBinaryPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(userBin), 0755); err != nil {
+		return err
+	}
+	if err := copyFileForUpdate(newBinary, userBin); err != nil {
+		return err
+	}
+	os.Chmod(userBin, 0755)
+	writeUserLauncher(userBin)
+	return nil
+}
 
-		if err := copyFileForUpdate(newBinary, userBinary); err != nil {
-			u.setStatus(0, "Failed to install: "+err.Error())
-			return
+func userInstallBinaryPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	switch runtime.GOOS {
+	case "windows":
+		base := os.Getenv("LOCALAPPDATA")
+		if base == "" {
+			base = filepath.Join(home, "AppData", "Local")
 		}
-		os.Chmod(userBinary, 0755)
+		return filepath.Join(base, "Yaria", "yaria-app.exe"), nil
+	case "darwin":
+		return filepath.Join(home, "Applications", "yaria-app"), nil
+	default:
+		return filepath.Join(home, ".local", "bin", "yaria-app"), nil
+	}
+}
 
-		// Update desktop entry to point to user binary
-		desktopFile := filepath.Join(home, ".local", "share", "applications", "yaria.desktop")
-		os.MkdirAll(filepath.Dir(desktopFile), 0755)
-		desktop := fmt.Sprintf(`[Desktop Entry]
+// writeUserLauncher creates a desktop entry on Linux after user-local install.
+func writeUserLauncher(userBinary string) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	home, _ := os.UserHomeDir()
+	desktopFile := filepath.Join(home, ".local", "share", "applications", "yaria.desktop")
+	os.MkdirAll(filepath.Dir(desktopFile), 0755)
+	desktop := fmt.Sprintf(`[Desktop Entry]
 Name=Yaria
 GenericName=Media Center & Video Downloader
 Comment=Download videos, manage local media, stream torrents
@@ -247,21 +318,7 @@ Type=Application
 Categories=AudioVideo;Video;Network;
 StartupWMClass=Yaria
 `, userBinary)
-		os.WriteFile(desktopFile, []byte(desktop), 0644)
-		updated = true
-	}
-
-	if !updated {
-		u.setStatus(0, "Update failed: could not replace binary")
-		return
-	}
-
-	u.setStatus(100, "Update complete! Restart the app to use the new version.")
-
-	// Emit event to frontend
-	if u.ctx != nil {
-		wailsRuntime.EventsEmit(u.ctx, "update-complete", nil)
-	}
+	os.WriteFile(desktopFile, []byte(desktop), 0644)
 }
 
 // RestartApp relaunches the application binary and exits the current process.
@@ -271,8 +328,10 @@ func (u *UpdaterService) RestartApp() {
 		return
 	}
 	cmd := exec.Command(exe)
+	hideConsole(cmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	setProcAttrDetached(cmd)
 	cmd.Start()
 	os.Exit(0)
 }
@@ -285,15 +344,18 @@ func (u *UpdaterService) setStatus(progress int, msg string) {
 }
 
 func sudoUpdate(src, dst string) error {
-	// Write a small shell script that copies and sets permissions
+	// Linux-only privilege escalation helper (kept for manual/system installs).
+	if runtime.GOOS != "linux" {
+		return copyFileForUpdate(src, dst)
+	}
 	script := fmt.Sprintf("#!/bin/sh\ncp '%s' '%s' && chmod 755 '%s'\n", src, dst, dst)
 	scriptPath := filepath.Join(os.TempDir(), "yaria-update.sh")
 	os.WriteFile(scriptPath, []byte(script), 0755)
 	defer os.Remove(scriptPath)
 
-	// Try pkexec with DISPLAY set for graphical prompt
 	if path, err := exec.LookPath("pkexec"); err == nil {
 		cmd := exec.Command(path, "sh", scriptPath)
+		hideConsole(cmd)
 		cmd.Env = append(os.Environ(),
 			"DISPLAY="+os.Getenv("DISPLAY"),
 			"XAUTHORITY="+os.Getenv("XAUTHORITY"),
@@ -306,7 +368,6 @@ func sudoUpdate(src, dst string) error {
 		}
 	}
 
-	// Try sudo non-interactive
 	if path, err := exec.LookPath("sudo"); err == nil {
 		if out, err := exec.Command(path, "-n", "sh", scriptPath).CombinedOutput(); err == nil {
 			return nil
@@ -315,7 +376,6 @@ func sudoUpdate(src, dst string) error {
 		}
 	}
 
-	// Try direct copy (works if user owns the install dir)
 	if err := copyFileForUpdate(src, dst); err == nil {
 		os.Chmod(dst, 0755)
 		return nil
@@ -365,7 +425,6 @@ func extractTarGz(tarPath, destDir string) error {
 		}
 
 		target := filepath.Join(destDir, hdr.Name)
-		// Security: prevent path traversal
 		if !strings.HasPrefix(target, filepath.Clean(destDir)+string(os.PathSeparator)) {
 			continue
 		}
@@ -382,6 +441,45 @@ func extractTarGz(tarPath, destDir string) error {
 			io.Copy(out, tr)
 			out.Close()
 			os.Chmod(target, os.FileMode(hdr.Mode))
+		}
+	}
+	return nil
+}
+
+func extractZip(zipPath, destDir string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	cleanDest := filepath.Clean(destDir)
+	for _, f := range r.File {
+		target := filepath.Join(destDir, f.Name)
+		// Security: prevent path traversal
+		if !strings.HasPrefix(filepath.Clean(target), cleanDest+string(os.PathSeparator)) &&
+			filepath.Clean(target) != cleanDest {
+			continue
+		}
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(target, 0o755)
+			continue
+		}
+		os.MkdirAll(filepath.Dir(target), 0o755)
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.Create(target)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, err = io.Copy(out, rc)
+		out.Close()
+		rc.Close()
+		if err != nil {
+			return err
 		}
 	}
 	return nil

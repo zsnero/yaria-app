@@ -1,16 +1,19 @@
 BINARY = yaria-app
 BUILD_DIR = build/bin
+# Linux needs webkit2_41; Windows/macOS use WebView2 / WKWebView (no webkit tag)
 TAGS_FREE = webkit2_41,desktop,production
 TAGS_PRO = webkit2_41,desktop,production,pro
-TAGS_WIN_FREE = desktop,production
-TAGS_WIN_PRO = desktop,production,pro
+TAGS_CROSS_FREE = desktop,production
+TAGS_CROSS_PRO = desktop,production,pro
 LDFLAGS = -s -w
 LDFLAGS_WIN = -s -w -H windowsgui
 MINGW_CC = x86_64-w64-mingw32-gcc
 
-.PHONY: build build-pro run dev dev-pro clean tidy build-windows build-windows-pro
+.PHONY: build build-pro run dev dev-pro clean tidy \
+	build-linux build-linux-pro build-windows build-windows-pro \
+	build-darwin build-darwin-pro build-all build-all-pro
 
-# Free build (Yaria only, opensource)
+# Free build (Yaria only, opensource) — host platform
 build:
 	@mkdir -p $(BUILD_DIR)
 	go build -tags "$(TAGS_FREE)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)
@@ -36,30 +39,37 @@ dev-pro:
 run:
 	$(BUILD_DIR)/$(BINARY)
 
-# Cross-compilation (free)
+# --- Linux ---
 build-linux:
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "$(TAGS_FREE)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64
 
-# Cross-compilation (pro)
 build-linux-pro:
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "$(TAGS_PRO)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-linux-amd64
 
-# Cross-compilation Windows (free) - requires: sudo apt install gcc-mingw-w64-x86-64
+# --- Windows (requires: gcc-mingw-w64-x86-64; WebView2 runtime on target) ---
 build-windows:
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 CC=$(MINGW_CC) GOOS=windows GOARCH=amd64 go build -tags "$(TAGS_WIN_FREE)" -ldflags "$(LDFLAGS_WIN)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe
+	CGO_ENABLED=1 CC=$(MINGW_CC) GOOS=windows GOARCH=amd64 go build -tags "$(TAGS_CROSS_FREE)" -ldflags "$(LDFLAGS_WIN)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe
 
-# Cross-compilation Windows (pro)
 build-windows-pro:
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 CC=$(MINGW_CC) GOOS=windows GOARCH=amd64 go build -tags "$(TAGS_WIN_PRO)" -ldflags "$(LDFLAGS_WIN)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe
+	CGO_ENABLED=1 CC=$(MINGW_CC) GOOS=windows GOARCH=amd64 go build -tags "$(TAGS_CROSS_PRO)" -ldflags "$(LDFLAGS_WIN)" -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe
 
-# Build all platforms (free)
+# --- macOS (best built on a Mac; CGO cross-compile needs osxcross) ---
+build-darwin:
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -tags "$(TAGS_CROSS_FREE)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-darwin-amd64
+	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -tags "$(TAGS_CROSS_FREE)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-darwin-arm64
+
+build-darwin-pro:
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -tags "$(TAGS_CROSS_PRO)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-darwin-amd64
+	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -tags "$(TAGS_CROSS_PRO)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-darwin-arm64
+
+# Build all platforms (free / pro)
 build-all: build-linux build-windows
-
-# Build all platforms (pro)
 build-all-pro: build-linux-pro build-windows-pro
 
 clean:

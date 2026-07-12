@@ -26,19 +26,19 @@ import (
 
 // activeDownload tracks the state of a single download.
 type activeDownload struct {
-	ID          string
-	URL         string
-	Title       string
-	Thumbnail   string
-	Status      string // "queued", "metadata", "downloading", "complete", "error", "cancelled"
-	Percent     float64
-	Speed       string
-	ETA         string
-	Error       string
-	StartedAt   string
-	cancel      context.CancelFunc
-	lastEmit    time.Time
-	pipeWriter  *io.PipeWriter
+	ID              string
+	URL             string
+	Title           string
+	Thumbnail       string
+	Status          string // "queued", "metadata", "downloading", "complete", "error", "cancelled"
+	Percent         float64
+	Speed           string
+	ETA             string
+	Error           string
+	StartedAt       string
+	cancel          context.CancelFunc
+	lastEmit        time.Time
+	pipeWriter      *io.PipeWriter
 	Resolution      string
 	DownloadDir     string
 	AudioOnly       bool
@@ -164,29 +164,44 @@ func cleanURL(url string) string {
 
 // FetchMetadata gets video title, thumbnail, and playlist info for a URL.
 // Falls back to OEmbed/noembed API if yt-dlp fails (e.g. bot detection).
+// Never blocks the UI forever: yt-dlp is bounded and OEmbed is used as backup.
 func (d *DownloadService) FetchMetadata(rawURL string) map[string]interface{} {
 	url := cleanURL(rawURL)
 
-	// Try yt-dlp first (if initialized)
+	// Try yt-dlp first (if initialized), with a hard wall-clock budget
 	if d.dl != nil {
-		playlistInfo, title, err := d.dl.GetMetadata([]string{url})
-		if err == nil && title != "" {
-			result := map[string]interface{}{"title": title}
-			if playlistInfo != "" {
-				parts := strings.Split(playlistInfo, "&")
-				if len(parts) >= 3 {
-					result["playlist_id"] = parts[0]
-					result["playlist_title"] = parts[1]
-					result["playlist_count"] = parts[2]
-				}
-			}
-			thumb := d.getThumbnailURL(url)
-			if thumb != "" {
-				result["thumbnail"] = thumb
-			}
-			return result
+		type metaResult struct {
+			playlistInfo string
+			title        string
+			err          error
 		}
-		// yt-dlp failed -- fall through to fallback
+		ch := make(chan metaResult, 1)
+		go func() {
+			pi, title, err := d.dl.GetMetadata([]string{url})
+			ch <- metaResult{pi, title, err}
+		}()
+
+		select {
+		case res := <-ch:
+			if res.err == nil && res.title != "" {
+				result := map[string]interface{}{"title": res.title}
+				if res.playlistInfo != "" {
+					parts := strings.Split(res.playlistInfo, "&")
+					if len(parts) >= 3 {
+						result["playlist_id"] = parts[0]
+						result["playlist_title"] = parts[1]
+						result["playlist_count"] = parts[2]
+					}
+				}
+				thumb := d.getThumbnailURL(url)
+				if thumb != "" {
+					result["thumbnail"] = thumb
+				}
+				return result
+			}
+		case <-time.After(50 * time.Second):
+			// yt-dlp hung (cookie DB / network) — use OEmbed
+		}
 	}
 
 	// Fallback: use noembed.com (free OEmbed proxy, no auth needed)
@@ -210,7 +225,8 @@ func (d *DownloadService) FetchMetadata(rawURL string) map[string]interface{} {
 // without needing cookies or authentication.
 func (d *DownloadService) fetchMetadataFallback(videoURL string) map[string]interface{} {
 	apiURL := "https://noembed.com/embed?url=" + videoURL
-	resp, err := http.Get(apiURL)
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(apiURL)
 	if err != nil {
 		return nil
 	}
@@ -218,7 +234,7 @@ func (d *DownloadService) fetchMetadataFallback(videoURL string) map[string]inte
 	if resp.StatusCode != 200 {
 		return nil
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil
 	}
@@ -471,6 +487,12 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		if dlErr != nil {
 			errMsg = dlErr.Error()
 		}
+		// Prefer a more specific ERROR line captured from yt-dlp stderr
+		d.mu.Lock()
+		if ad != nil && ad.Error != "" && (errMsg == "download failed" || strings.Contains(errMsg, "all download attempts")) {
+			errMsg = ad.Error
+		}
+		d.mu.Unlock()
 		errType, userMsg := classifyError(errMsg)
 		d.updateDownload(id, "error", 0, "", "", userMsg)
 		_ = errType
@@ -681,7 +703,7 @@ func (d *DownloadService) DeleteDownloadFiles(id string) map[string]interface{} 
 	if filePath != "" {
 		// filePath points to a file inside a title folder -- delete the parent folder
 		dir := filepath.Dir(filePath)
-		if dir != "" && dir != "." && dir != "/" {
+		if isSafeToDeleteDir(dir) {
 			os.RemoveAll(dir)
 		}
 	}
@@ -712,14 +734,11 @@ func (d *DownloadService) PlayDownloadedFile(id string) map[string]interface{} {
 		return map[string]interface{}{"error": "file not found on disk"}
 	}
 
-	// Find a media player
-	for _, name := range []string{"mpv", "vlc", "celluloid", "totem", "xdg-open"} {
-		if p, err := exec.LookPath(name); err == nil {
-			go exec.Command(p, filePath).Run()
-			return map[string]interface{}{"status": "playing", "player": name}
-		}
+	player, err := openMediaFile(filePath)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
 	}
-	return map[string]interface{}{"error": "no media player found"}
+	return map[string]interface{}{"status": "playing", "player": player}
 }
 
 // SetDownloadDir sets the default download directory.
@@ -787,7 +806,9 @@ func sendNotification(title, message string) {
 		exec.Command("osascript", "-e", script).Start()
 	case "windows":
 		ps := fmt.Sprintf(`[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true; $n.ShowBalloonTip(5000, '%s', '%s', 'Info')`, title, message)
-		exec.Command("powershell", "-Command", ps).Start()
+		cmd := exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps)
+		hideConsole(cmd)
+		cmd.Start()
 	}
 }
 
@@ -816,6 +837,10 @@ func (d *DownloadService) DetectPlaylist(rawURL string) map[string]interface{} {
 func classifyError(errMsg string) (string, string) {
 	msg := strings.ToLower(errMsg)
 	switch {
+	case strings.Contains(msg, "could not copy") && strings.Contains(msg, "cookie"),
+		strings.Contains(msg, "could not read browser cookies"),
+		strings.Contains(msg, "cookie database"):
+		return "cookies_locked", "Could not read browser cookies. Close Chrome/Edge completely and try again (public videos work without cookies)."
 	case strings.Contains(msg, "sign in") || strings.Contains(msg, "not a bot") || strings.Contains(msg, "cookies"):
 		return "auth", "Authentication required. Try logging into the site in your browser first."
 	case strings.Contains(msg, "429") || strings.Contains(msg, "too many requests"):
@@ -879,7 +904,11 @@ func (d *DownloadService) updateDownload(id, status string, percent float64, spe
 		ad.Percent = percent
 		ad.Speed = speed
 		ad.ETA = eta
-		ad.Error = errMsg
+		// Don't wipe a more specific yt-dlp ERROR captured during download
+		// when progress updates pass an empty errMsg.
+		if errMsg != "" || status == "error" || status == "cancelled" || status == "complete" {
+			ad.Error = errMsg
+		}
 	}
 	title := ""
 	thumbnail := ""
@@ -1051,6 +1080,15 @@ func (d *DownloadService) parseProgress(ctx context.Context, id string, reader i
 			d.updateDownload(id, "processing", 99, "", "", "")
 			return
 		}
+
+		// Remember yt-dlp ERROR lines so we can surface them if the download fails
+		if strings.HasPrefix(strings.TrimSpace(line), "ERROR:") {
+			d.mu.Lock()
+			if ad, ok := d.downloads[id]; ok {
+				ad.Error = strings.TrimSpace(line)
+			}
+			d.mu.Unlock()
+		}
 	}
 
 	// Read byte-by-byte to avoid pipe buffering issues on Linux
@@ -1072,8 +1110,8 @@ func (d *DownloadService) parseProgress(ctx context.Context, id string, reader i
 			} else {
 				lineBuf = append(lineBuf, oneByte[0])
 			}
-	}
-	if err != nil {
+		}
+		if err != nil {
 			if len(lineBuf) > 0 {
 				processLine(string(lineBuf))
 			}

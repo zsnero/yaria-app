@@ -31,7 +31,7 @@ func (c *CodecService) CheckCodecs() map[string]interface{} {
 
 	required := []struct {
 		name    string
-		testLib string // GStreamer element to check
+		testLib string            // GStreamer element to check
 		pkg     map[string]string // distro -> package name
 	}{
 		{
@@ -127,12 +127,15 @@ func (c *CodecService) InstallCodecs() map[string]interface{} {
 	case "arch":
 		args := append([]string{"pacman", "-S", "--noconfirm"}, missing...)
 		cmd = exec.Command("pkexec", args...)
+		hideConsole(cmd)
 	case "debian":
 		args := append([]string{"apt", "install", "-y"}, missing...)
 		cmd = exec.Command("pkexec", args...)
+		hideConsole(cmd)
 	case "fedora":
 		args := append([]string{"dnf", "install", "-y"}, missing...)
 		cmd = exec.Command("pkexec", args...)
+		hideConsole(cmd)
 	default:
 		return map[string]interface{}{"error": "unsupported distro: " + distro, "install_cmd": check["install_cmd"]}
 	}
@@ -154,6 +157,7 @@ func (c *CodecService) InstallCodecs() map[string]interface{} {
 // checkGstElement tests if a GStreamer element exists using gst-inspect-1.0
 func checkGstElement(element string) bool {
 	cmd := exec.Command("gst-inspect-1.0", element)
+	hideConsole(cmd)
 	return cmd.Run() == nil
 }
 

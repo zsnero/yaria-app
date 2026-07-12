@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"yaria/pkg/appconfig"
@@ -36,7 +39,7 @@ func expandTilde(path string) string {
 		home, _ := os.UserHomeDir()
 		return home
 	}
-	if strings.HasPrefix(path, "~/") {
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, path[2:])
 	}
@@ -51,9 +54,105 @@ func getDataDir() string {
 		home, _ := os.UserHomeDir()
 		dataDir = filepath.Join(home, "Downloads", "Mantorex")
 	}
-	if strings.HasPrefix(dataDir, "~/") {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, dataDir[2:])
+	return expandTilde(dataDir)
+}
+
+// binaryName returns name with .exe suffix on Windows.
+func binaryName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
 	}
-	return dataDir
+	return name
+}
+
+// appDataDir returns the per-user data directory for Yaria (~/.yaria).
+func appDataDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".yaria")
+}
+
+// openWithDefaultApp opens a file with the OS default handler.
+func openWithDefaultApp(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		// Use rundll32 so paths with spaces work without a shell.
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	setProcAttrDetached(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
+}
+
+// openFolder opens a directory in the system file manager.
+func openFolder(dir string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", dir)
+	case "darwin":
+		cmd = exec.Command("open", dir)
+	default:
+		cmd = exec.Command("xdg-open", dir)
+	}
+	setProcAttrDetached(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
+}
+
+// openMediaFile launches a media file in a known player, or the system default.
+// Returns the player name used ("system" for the OS default handler).
+func openMediaFile(filePath string) (string, error) {
+	var players []string
+	switch runtime.GOOS {
+	case "darwin":
+		players = []string{"mpv", "vlc", "iina"}
+	case "windows":
+		players = []string{"mpv", "vlc"}
+	default:
+		players = []string{"mpv", "vlc", "celluloid", "totem"}
+	}
+	for _, name := range players {
+		if p, err := exec.LookPath(name); err == nil {
+			cmd := exec.Command(p, filePath)
+			setProcAttrDetached(cmd)
+			if err := cmd.Start(); err == nil {
+				go cmd.Wait()
+				return name, nil
+			}
+		}
+	}
+	if err := openWithDefaultApp(filePath); err != nil {
+		return "", fmt.Errorf("no media player found: %w", err)
+	}
+	return "system", nil
+}
+
+// isSafeToDeleteDir rejects filesystem roots so we never RemoveAll("/") or "C:\".
+func isSafeToDeleteDir(dir string) bool {
+	if dir == "" || dir == "." {
+		return false
+	}
+	clean := filepath.Clean(dir)
+	if clean == string(filepath.Separator) {
+		return false
+	}
+	// Windows drive root: "C:\" or "C:"
+	if vol := filepath.VolumeName(clean); vol != "" {
+		rest := strings.TrimPrefix(clean, vol)
+		if rest == "" || rest == string(filepath.Separator) {
+			return false
+		}
+	}
+	return true
 }
