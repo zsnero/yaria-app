@@ -306,18 +306,43 @@ input[type="range"] {
   }
 }
 
-// Spinner
+// Global spin keyframes (must not be Svelte-scoped — WebKitGTK/Wails)
+@keyframes yaria-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+// Spinner (div-based, used by legacy JS pages)
 .spinner {
   width: 24px;
   height: 24px;
   border: 2px solid rgba(255, 255, 255, 0.1);
   border-top-color: $accent;
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: yaria-spin 0.75s linear infinite;
+  will-change: transform;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+// SVG spinner used by Spinner.svelte
+// CSS animation as backup; SMIL animateTransform in the SVG is primary for WebKitGTK
+.spinner-svg {
+  display: block;
+  overflow: visible;
+  animation: yaria-spin 0.75s linear infinite;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+.spinner-track {
+  stroke: rgba(255, 255, 255, 0.12);
+}
+.spinner-arc {
+  stroke: $accent;
+  stroke-linecap: round;
+  stroke-dasharray: 40 80;
 }
 
 // Loading screen
@@ -400,13 +425,23 @@ h2 { line-height: 1.2; }
 // Image loading transition
 img { transition: opacity 0.3s; }
 
-// UI Customization overrides
+// UI Customization: kill decorative motion, but NEVER stop loaders
 html.no-animations {
-  *, *::before, *::after {
+  *:not(.spinner):not(.spinner-svg):not(.spinner-arc):not(.spinner-container),
+  *:not(.spinner):not(.spinner-svg):not(.spinner-container)::before,
+  *:not(.spinner):not(.spinner-svg):not(.spinner-container)::after {
     animation-duration: 0s !important;
     animation-delay: 0s !important;
     transition-duration: 0s !important;
     transition-delay: 0s !important;
+  }
+
+  // Force loaders to keep spinning
+  .spinner,
+  .spinner-svg {
+    animation: yaria-spin 0.75s linear infinite !important;
+    animation-duration: 0.75s !important;
+    animation-delay: 0s !important;
   }
 }
 

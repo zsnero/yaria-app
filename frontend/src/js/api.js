@@ -565,16 +565,27 @@ function applyUISettings() {
   root.style.setProperty('--app-font', font + ', sans-serif');
   root.style.setProperty('--app-font-size', size + 'px');
 
-  // Combine font size and UI scale into a single zoom factor.
-  // Default font size is 14px. Zoom scales everything uniformly
-  // including hardcoded px sizes in CSS.
+  // Combine font size and UI scale. Avoid body.style.zoom — it breaks
+  // CSS animations in WebKitGTK (Wails on Linux). Scale #app instead.
   const fontZoom = parseInt(size) / 14;
   const scaleZoom = parseInt(scale) / 100;
   const totalZoom = fontZoom * scaleZoom;
-  if (totalZoom !== 1) {
+  const appRoot = document.getElementById('app');
+  document.body.style.zoom = '';
+  if (appRoot) {
+    if (totalZoom !== 1) {
+      appRoot.style.transform = 'scale(' + totalZoom + ')';
+      appRoot.style.transformOrigin = 'top left';
+      appRoot.style.width = (100 / totalZoom) + '%';
+      appRoot.style.height = (100 / totalZoom) + '%';
+    } else {
+      appRoot.style.transform = '';
+      appRoot.style.transformOrigin = '';
+      appRoot.style.width = '';
+      appRoot.style.height = '';
+    }
+  } else if (totalZoom !== 1) {
     document.body.style.zoom = totalZoom.toString();
-  } else {
-    document.body.style.zoom = '';
   }
 
   // Animations

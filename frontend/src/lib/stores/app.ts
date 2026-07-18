@@ -58,7 +58,25 @@ export function applyUISettings() {
   const fontZoom = parseInt(settings.fontSize) / 14;
   const scaleZoom = parseInt(settings.scale) / 100;
   const totalZoom = fontZoom * scaleZoom;
-  document.body.style.zoom = totalZoom !== 1 ? totalZoom.toString() : '';
+  // Prefer CSS zoom only when needed. body.zoom breaks CSS animations in WebKitGTK;
+  // use a transform scale on #app when available, fall back to zoom.
+  const appRoot = document.getElementById('app') || document.getElementById('app-root');
+  if (appRoot) {
+    document.body.style.zoom = '';
+    if (totalZoom !== 1) {
+      appRoot.style.transform = `scale(${totalZoom})`;
+      appRoot.style.transformOrigin = 'top left';
+      appRoot.style.width = `${100 / totalZoom}%`;
+      appRoot.style.height = `${100 / totalZoom}%`;
+    } else {
+      appRoot.style.transform = '';
+      appRoot.style.transformOrigin = '';
+      appRoot.style.width = '';
+      appRoot.style.height = '';
+    }
+  } else {
+    document.body.style.zoom = totalZoom !== 1 ? totalZoom.toString() : '';
+  }
 
   root.classList.toggle('no-animations', !settings.animations);
   root.classList.toggle('no-blur', !settings.blur);
