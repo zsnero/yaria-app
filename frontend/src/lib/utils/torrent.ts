@@ -92,13 +92,25 @@ export function extractQuality(title: string): string {
 export function pickBestTorrent(list: TorrentResult[], searchTitle: string): TorrentResult | null {
   if (!list || list.length === 0) return null;
 
-  const normSearch = (searchTitle || '').toLowerCase().replace(/[._\-:]/g, ' ').replace(/\s+/g, ' ').trim();
+  const yearMatch = (searchTitle || '').match(/\b((?:19|20)\d{2})\b/);
+  const wantYear = yearMatch ? yearMatch[1] : '';
+  const normSearch = (searchTitle || '')
+    .toLowerCase()
+    .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+    .replace(/[._\-:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const stopWords = ['the', 'a', 'an', 'of', 'and', 'in', 'on', 'at', 'to', 'for'];
   const searchTokens = normSearch.split(' ').filter(w => w.length > 1 && !stopWords.includes(w));
 
   function checkRelevance(torrentTitle: string): boolean {
     if (!normSearch || searchTokens.length === 0) return true;
     const norm = (torrentTitle || '').toLowerCase().replace(/[._\-:]/g, ' ').replace(/\s+/g, ' ').trim();
+    // Reject wrong-year remakes / shared titles
+    if (wantYear) {
+      const years = [...(torrentTitle || '').matchAll(/\b((?:19|20)\d{2})\b/g)].map(m => m[1]);
+      if (years.length > 0 && !years.includes(wantYear)) return false;
+    }
     let matched = 0;
     for (const tok of searchTokens) {
       if (norm.includes(tok)) matched++;
