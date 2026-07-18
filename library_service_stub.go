@@ -23,6 +23,10 @@ func (l *LibraryService) UpdateProgress(id string, progress map[string]interface
 	return map[string]interface{}{"error": stubErr}
 }
 
+func (l *LibraryService) UpdateMeta(id string, meta map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{"error": stubErr}
+}
+
 func (l *LibraryService) FindByTMDBID(tmdbID int, mediaType string) interface{} {
 	return nil
 }

@@ -201,3 +201,42 @@ export function fmtDuration(seconds: number): string {
 
 // NO_POSTER placeholder SVG
 export const NO_POSTER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='225'%3E%3Crect fill='%231a1a2e' width='150' height='225' rx='8'/%3E%3Ctext fill='%23555570' x='75' y='112' text-anchor='middle' font-size='12' font-family='sans-serif'%3ENo Poster%3C/text%3E%3C/svg%3E";
+
+// Strip release tags from torrent/file names for TMDB lookup & library display.
+// "Filth.2013.Triple.BDRip.1080p..." → { title: "Filth", year: "2013" }
+export function cleanReleaseTitle(raw: string): { title: string; year: string } {
+  if (!raw) return { title: '', year: '' };
+  let s = raw
+    .replace(/[\[\](){}]/g, ' ')
+    .replace(/[._]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const yearMatch = s.match(/\b((?:19|20)\d{2})\b/);
+  const year = yearMatch ? yearMatch[1] : '';
+
+  // For release-style names with a year mid-string, title is usually before the year
+  // e.g. "Filth 2013 Triple BDRip 1080p" → "Filth"
+  if (yearMatch && yearMatch.index !== undefined && yearMatch.index > 0) {
+    const before = s.slice(0, yearMatch.index).trim();
+    if (before.length >= 2) {
+      s = before;
+    }
+  }
+
+  // Cut at first quality / codec / source token
+  const cutRe =
+    /\b(?:\d{3,4}p|4k|uhd|hdr|dv|sdr|x264|x265|h264|h265|hevc|avc|av1|bluray|blu[\s-]?ray|bdrip|brrip|webrip|web[\s-]?dl|webdl|web|hdtv|dvdrip|remux|proper|repack|internal|cam|telesync|ts|hdcam|yts|yify|rarbg|sparks|amiable|geckos|ctrlhd|flux|ntb|eztv|ettv|mkv|mp4|avi|multi|dual|audio|subs?|extended|unrated|directors?|cut|truehd|dts|atmos|aac|ac3|dd5|ddpa?|ma|hdma|10bit|8bit|complete|pack|season|s\d{1,2}e\d{1,3}|s\d{1,2}|triple|remastered)\b/i;
+  const cut = s.search(cutRe);
+  if (cut > 0) s = s.slice(0, cut).trim();
+
+  // Remove year from title portion if still present
+  if (year) {
+    s = s.replace(new RegExp(`\\b${year}\\b`), ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // Drop trailing junk like " - GROUP"
+  s = s.replace(/\s+-\s+[A-Za-z0-9]+$/, '').trim();
+
+  return { title: s || raw, year };
+}
