@@ -61,13 +61,13 @@
     inset: 0;
     z-index: 9999;
     @include flex-center;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
   }
 
   .app-confirm-modal {
-    @include glass;
+    @include modal-panel;
     border-radius: $radius;
     padding: 28px 32px;
     max-width: 420px;

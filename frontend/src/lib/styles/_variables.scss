@@ -47,6 +47,13 @@ $tablet: 1024px;
   border-color: $border-glass-hover;
 }
 
+// Solid panel for dialogs/modals (must stay readable over content)
+@mixin modal-panel {
+  background: #141422;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65);
+}
+
 @mixin truncate {
   white-space: nowrap;
   overflow: hidden;

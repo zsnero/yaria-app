@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../../api/wails';
   import { toastSuccess, toastError } from '../../stores/toast';
+  import AppSelect from '../../components/AppSelect.svelte';
 
   let speedLimit = $state(0);
   let maxConcurrent = $state(3);
@@ -51,20 +52,16 @@
   <div class="setting-group">
     <div class="setting-label">Download Speed Limit</div>
     <div class="setting-desc">Limit bandwidth for video and audio downloads.</div>
-    <select class="setting-input" bind:value={speedLimit} onchange={handleSpeedChange}>
-      {#each speedOptions as opt}
-        <option value={opt.value}>{opt.label}</option>
-      {/each}
-    </select>
+    <AppSelect bind:value={speedLimit} options={speedOptions} onchange={handleSpeedChange} />
   </div>
   <div class="setting-group">
     <div class="setting-label">Concurrent Downloads</div>
     <div class="setting-desc">Maximum number of simultaneous downloads.</div>
-    <select class="setting-input" bind:value={maxConcurrent} onchange={handleConcurrentChange}>
-      {#each [1, 2, 3, 5, 10] as n}
-        <option value={n}>{n}</option>
-      {/each}
-    </select>
+    <AppSelect
+      bind:value={maxConcurrent}
+      options={[1, 2, 3, 5, 10].map((n) => ({ value: n, label: String(n) }))}
+      onchange={handleConcurrentChange}
+    />
   </div>
 </div>
 

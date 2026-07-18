@@ -6,6 +6,7 @@
   import { autoFocus } from '../../actions/index';
   import Spinner from '../../components/Spinner.svelte';
   import ConfirmDialog from '../../components/ConfirmDialog.svelte';
+  import AppSelect from '../../components/AppSelect.svelte';
 
   // License
   let licenseLoading = $state(true);
@@ -300,11 +301,15 @@
   <div class="setting-group">
     <div class="setting-label">Proxy</div>
     <div class="setting-desc">Route network traffic through a proxy server.</div>
-    <select class="setting-input" bind:value={proxyType} onchange={handleProxyTypeChange}>
-      <option value="none">No Proxy</option>
-      <option value="http">HTTP Proxy</option>
-      <option value="socks5">SOCKS5 Proxy</option>
-    </select>
+    <AppSelect
+      bind:value={proxyType}
+      options={[
+        { value: 'none', label: 'No Proxy' },
+        { value: 'http', label: 'HTTP Proxy' },
+        { value: 'socks5', label: 'SOCKS5 Proxy' },
+      ]}
+      onchange={handleProxyTypeChange}
+    />
     {#if proxyType !== 'none'}
       <input
         type="text"
@@ -339,19 +344,11 @@
     <div class="appearance-grid">
       <div>
         <label class="appearance-label">Font Family</label>
-        <select class="setting-input" bind:value={uiFont} onchange={handleFontChange}>
-          {#each fontOptions as opt}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
+        <AppSelect bind:value={uiFont} options={fontOptions} onchange={handleFontChange} />
       </div>
       <div>
         <label class="appearance-label">Font Size</label>
-        <select class="setting-input" bind:value={uiFontSize} onchange={handleFontSizeChange}>
-          {#each fontSizeOptions as opt}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
+        <AppSelect bind:value={uiFontSize} options={fontSizeOptions} onchange={handleFontSizeChange} />
       </div>
     </div>
     <div class="scale-row">

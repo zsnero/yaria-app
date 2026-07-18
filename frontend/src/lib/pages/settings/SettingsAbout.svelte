@@ -356,9 +356,9 @@
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -369,12 +369,10 @@
     width: 640px;
     max-width: 92vw;
     max-height: 80vh;
-    background: #12121e;
-    border: 1px solid $border-glass;
+    @include modal-panel;
     border-radius: $radius;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
   }
 
   .legal-header {

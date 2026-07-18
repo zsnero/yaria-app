@@ -292,15 +292,15 @@ html {
 /* === In-App File Picker === */
 .fp-overlay {
   position: fixed; inset: 0; z-index: 1000;
-  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center;
   animation: pageIn 0.2s ease-out;
 }
 .fp-modal {
   width: 680px; max-width: 95vw; max-height: 80vh;
-  background: #12121e; border: 1px solid rgba(255,255,255,0.08);
+  background: #141422; border: 1px solid rgba(255,255,255,0.1);
   border-radius: var(--radius); display: flex; flex-direction: column;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.65);
 }
 .fp-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -766,14 +766,14 @@ body { overscroll-behavior: none; }
 /* Custom confirm dialog */
 .app-confirm-overlay {
   position: fixed; inset: 0; z-index: 2000;
-  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center;
   animation: pageIn 0.15s ease-out;
 }
 .app-confirm-modal {
-  background: #16162a; border: 1px solid rgba(255,255,255,0.08);
+  background: #141422; border: 1px solid rgba(255,255,255,0.1);
   border-radius: var(--radius); padding: 28px 32px; min-width: 320px; max-width: 440px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.65);
 }
 .app-confirm-msg { font-size: 14px; color: var(--text); line-height: 1.6; margin: 0 0 24px; }
 .app-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
