@@ -227,7 +227,7 @@ export const library = {
 
 // === Torrent Downloads ===
 export const torrentDownloads = {
-  add: (magnet: string, title: string, dir: string): Promise<{ id: string }> =>
+  add: (magnet: string, title: string, dir: string): Promise<{ id?: string; status?: string; error?: string; existing?: boolean }> =>
     call(() => wails().TorrentDownloadService.AddDownload(magnet, title, dir)),
   list: (): Promise<any[]> =>
     call(() => wails().TorrentDownloadService.ListDownloads()),
@@ -241,6 +241,8 @@ export const torrentDownloads = {
     call(() => wails().TorrentDownloadService.DeleteDownload(id)),
   cancel: (id: string): Promise<any> =>
     call(() => wails().TorrentDownloadService.CancelDownload(id)),
+  getPlayPath: (id: string): Promise<{ path?: string; title?: string; dir?: string; error?: string }> =>
+    call(() => wails().TorrentDownloadService.GetPlayPath(id)),
 };
 
 // === Local Media ===
@@ -255,6 +257,8 @@ export const media = {
     call(() => wails().MediaService.GetMediaDetails(id)),
   play: (id: string): Promise<{ stream_url: string; title: string; duration: number }> =>
     call(() => wails().MediaService.PlayMedia(id)),
+  playPath: (filePath: string): Promise<{ stream_url?: string; title?: string; error?: string; id?: string }> =>
+    call(() => wails().MediaService.PlayPath(filePath)),
   getContinueWatching: (): Promise<LocalMedia[]> =>
     call(() => wails().MediaService.GetContinueWatching()),
   getWatchHistory: (): Promise<LocalMedia[]> =>

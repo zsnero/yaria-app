@@ -20,3 +20,6 @@ func (s *TorrentDownloadService) PauseDownload(id string) map[string]interface{}
 func (s *TorrentDownloadService) ResumeDownload(id string) map[string]interface{} { return map[string]interface{}{"error": stubErr} }
 func (s *TorrentDownloadService) GetDownloadDir() string { return "" }
 func (s *TorrentDownloadService) SelectDownloadDir() string { return "" }
+func (s *TorrentDownloadService) GetPlayPath(id string) map[string]interface{} {
+	return map[string]interface{}{"error": stubErr}
+}
