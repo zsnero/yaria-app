@@ -388,12 +388,20 @@
     <div class="setting-label">Yaria Pro License</div>
     {#if licenseLoading}
       <Spinner size={18} message="Checking..." />
-    {:else if licenseInfo?.valid && licenseInfo?.plan === 'pro'}
+    {:else if licenseInfo?.valid && (licenseInfo?.plan === 'pro' || licenseInfo?.plan === 'trial')}
       <div class="license-info">
         <div class="license-badge-row">
-          <span class="badge badge-pro">PRO</span>
-          <span>Active</span>
+          {#if licenseInfo.plan === 'trial'}
+            <span class="badge badge-trial">TRIAL</span>
+            <span>Active — free Pro trial</span>
+          {:else}
+            <span class="badge badge-pro">PRO</span>
+            <span>Active</span>
+          {/if}
         </div>
+        {#if licenseInfo.expires_at}
+          <div class="license-detail">Expires: <span class="val">{licenseInfo.expires_at}</span></div>
+        {/if}
         <div class="license-detail">Email: <span class="val">{licenseInfo.email || '-'}</span></div>
         <div class="license-detail">Key: <span class="val">{licenseInfo.key ? licenseInfo.key.substring(0, 8) + '...' : '-'}</span></div>
         <div class="license-detail">Device: <span class="val">{deviceInfo?.device_name || '-'}</span></div>
@@ -665,6 +673,11 @@
   .badge-pro {
     background: $green;
     color: #000;
+  }
+
+  .badge-trial {
+    background: $accent;
+    color: #fff;
   }
 
   .badge-free {

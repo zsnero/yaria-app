@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"yaria/pkg/license"
 )
@@ -26,8 +27,16 @@ func (l *LicenseService) CheckLicense() map[string]interface{} {
 		"device_id":     info.DeviceID,
 		"device_name":   info.DeviceName,
 		"key":           info.Key,
+		"expires_at":    formatExpiry(info.ExpiresAt),
 		"pro_available": ProAvailable(),
 	}
+}
+
+func formatExpiry(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
 }
 
 // ActivateKey activates a license key for this device.
@@ -47,6 +56,23 @@ func (l *LicenseService) ActivateKey(key string) map[string]interface{} {
 		"email":       info.Email,
 		"device_id":   info.DeviceID,
 		"device_name": info.DeviceName,
+		"expires_at":  formatExpiry(info.ExpiresAt),
+	}
+}
+
+// StartTrial starts a one-time 30-day Pro trial for this device.
+func (l *LicenseService) StartTrial() map[string]interface{} {
+	info, err := license.StartTrial()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{
+		"valid":       info.Valid,
+		"plan":        info.Plan,
+		"email":       info.Email,
+		"device_id":   info.DeviceID,
+		"device_name": info.DeviceName,
+		"expires_at":  formatExpiry(info.ExpiresAt),
 	}
 }
 
