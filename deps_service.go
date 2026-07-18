@@ -69,6 +69,90 @@ func (d *DepsService) ListDirectories(path string) []map[string]interface{} {
 	return dirs
 }
 
+// ListEntries returns directories and optionally files under path.
+// fileExt is a comma-separated list of extensions without dots (e.g. "json,toml").
+// Empty fileExt returns directories only (same as ListDirectories).
+func (d *DepsService) ListEntries(path, fileExt string) []map[string]interface{} {
+	path = expandTilde(path)
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil
+	}
+
+	extSet := map[string]bool{}
+	for _, e := range strings.Split(fileExt, ",") {
+		e = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(e, ".")))
+		if e != "" {
+			extSet[e] = true
+		}
+	}
+	includeFiles := len(extSet) > 0
+
+	var out []map[string]interface{}
+	// Directories first
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if e.IsDir() {
+			out = append(out, map[string]interface{}{
+				"name":  name,
+				"path":  filepath.Join(path, name),
+				"is_dir": true,
+			})
+		}
+	}
+	if includeFiles {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+			if !extSet[ext] {
+				continue
+			}
+			out = append(out, map[string]interface{}{
+				"name":   name,
+				"path":   filepath.Join(path, name),
+				"is_dir": false,
+			})
+		}
+	}
+	return out
+}
+
+// ReadTextFile reads a UTF-8 text file (used for library import, etc.).
+func (d *DepsService) ReadTextFile(path string) map[string]interface{} {
+	path = expandTilde(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	// Cap at 50MB to avoid blowing memory
+	if len(data) > 50*1024*1024 {
+		return map[string]interface{}{"error": "file too large"}
+	}
+	return map[string]interface{}{"data": string(data), "path": path}
+}
+
+// WriteTextFile writes UTF-8 text to a path (used for library export, etc.).
+func (d *DepsService) WriteTextFile(path, content string) map[string]interface{} {
+	path = expandTilde(path)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "saved", "path": path}
+}
+
 // FFmpegPath returns the path to the bundled FFmpeg binary, or empty if not installed.
 func (d *DepsService) FFmpegPath() string {
 	p := filepath.Join(d.depsDir, binaryName("ffmpeg"))

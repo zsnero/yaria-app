@@ -197,6 +197,52 @@ func (s *SettingsService) GetSpeedLimit() int64 {
 	return appconfig.SpeedLimit()
 }
 
+// GetUISettings returns desktop UI preferences from disk (survives rebuilds).
+func (s *SettingsService) GetUISettings() map[string]interface{} {
+	ui := appconfig.GetUISettings()
+	return map[string]interface{}{
+		"font":       ui.Font,
+		"font_size":  ui.FontSize,
+		"scale":      ui.Scale,
+		"animations": ui.Animations,
+		"blur":       ui.Blur,
+		"blur_set":   appconfig.BlurIsSet(),
+		// false until the user has saved UI prefs at least once
+		"configured": appconfig.UIConfigured(),
+	}
+}
+
+// SaveUISettings persists desktop UI preferences to ~/.config/yaria/app.toml.
+func (s *SettingsService) SaveUISettings(settings map[string]interface{}) map[string]interface{} {
+	ui := appconfig.GetUISettings()
+	if v, ok := settings["font"].(string); ok && v != "" {
+		ui.Font = v
+	}
+	if v, ok := settings["font_size"].(string); ok && v != "" {
+		ui.FontSize = v
+	}
+	// Accept number or string for scale/font_size from JS
+	if v, ok := settings["font_size"].(float64); ok {
+		ui.FontSize = fmt.Sprintf("%d", int(v))
+	}
+	if v, ok := settings["scale"].(string); ok && v != "" {
+		ui.Scale = v
+	}
+	if v, ok := settings["scale"].(float64); ok {
+		ui.Scale = fmt.Sprintf("%d", int(v))
+	}
+	if v, ok := settings["animations"].(bool); ok {
+		ui.Animations = v
+	}
+	if v, ok := settings["blur"].(bool); ok {
+		ui.Blur = v
+	}
+	if err := appconfig.SetUISettings(ui); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "saved"}
+}
+
 // calcDirSize recursively calculates the total size of a directory.
 func calcDirSize(path string) int64 {
 	var size int64

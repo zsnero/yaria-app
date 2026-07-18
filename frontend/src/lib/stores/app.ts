@@ -1,4 +1,5 @@
 import { writable, derived } from 'svelte/store';
+import { api } from '../api/wails';
 
 // Active tab: 'yaria' or 'mantorex'
 export const activeTab = writable<'yaria' | 'mantorex'>('yaria');
@@ -19,14 +20,25 @@ export const currentMagnet = writable<string | null>(null);
 // Mantorex mode: 'local' | 'remote' | 'torrents'
 export const mantorexMode = writable<'local' | 'remote' | 'torrents'>('torrents');
 
-// UI Settings
-export const uiSettings = writable({
-  font: localStorage.getItem('yaria_ui_font') || 'Inter',
-  fontSize: localStorage.getItem('yaria_ui_fontsize') || '14',
-  scale: localStorage.getItem('yaria_ui_scale') || '100',
-  animations: localStorage.getItem('yaria_ui_animations') !== '0',
-  blur: localStorage.getItem('yaria_ui_blur') !== '0',
-});
+function defaultBlur(): boolean {
+  // Blur OFF by default on Linux (WebKitGTK glitches), ON elsewhere
+  return !navigator.platform.includes('Linux');
+}
+
+function readLocalUI() {
+  return {
+    font: localStorage.getItem('yaria_ui_font') || 'Inter',
+    fontSize: localStorage.getItem('yaria_ui_fontsize') || '14',
+    scale: localStorage.getItem('yaria_ui_scale') || '100',
+    animations: localStorage.getItem('yaria_ui_animations') !== '0',
+    blur: localStorage.getItem('yaria_ui_blur')
+      ? localStorage.getItem('yaria_ui_blur') === '1'
+      : defaultBlur(),
+  };
+}
+
+// UI Settings — start from localStorage for instant paint, then hydrate from disk
+export const uiSettings = writable(readLocalUI());
 
 // Derived: is mantorex route
 export const isMantorexRoute = derived(currentRoute, ($route) =>
@@ -38,19 +50,14 @@ export function navigate(hash: string) {
   window.location.hash = hash;
 }
 
-// Apply UI settings
-export function applyUISettings() {
+function applyToDOM(settings: {
+  font: string;
+  fontSize: string;
+  scale: string;
+  animations: boolean;
+  blur: boolean;
+}) {
   const root = document.documentElement;
-  const settings = {
-    font: localStorage.getItem('yaria_ui_font') || 'Inter',
-    fontSize: localStorage.getItem('yaria_ui_fontsize') || '14',
-    scale: localStorage.getItem('yaria_ui_scale') || '100',
-    animations: localStorage.getItem('yaria_ui_animations') !== '0',
-    // Blur OFF by default on Linux (WebKitGTK glitches), ON elsewhere (macOS/Windows)
-    blur: localStorage.getItem('yaria_ui_blur')
-      ? localStorage.getItem('yaria_ui_blur') === '1'
-      : !navigator.platform.includes('Linux'),
-  };
 
   root.style.setProperty('--app-font', settings.font + ', sans-serif');
   root.style.setProperty('--app-font-size', settings.fontSize + 'px');
@@ -82,4 +89,94 @@ export function applyUISettings() {
   root.classList.toggle('no-blur', !settings.blur);
 
   uiSettings.set(settings);
+}
+
+function writeLocalUI(settings: {
+  font: string;
+  fontSize: string;
+  scale: string;
+  animations: boolean;
+  blur: boolean;
+}) {
+  localStorage.setItem('yaria_ui_font', settings.font);
+  localStorage.setItem('yaria_ui_fontsize', settings.fontSize);
+  localStorage.setItem('yaria_ui_scale', settings.scale);
+  localStorage.setItem('yaria_ui_animations', settings.animations ? '1' : '0');
+  localStorage.setItem('yaria_ui_blur', settings.blur ? '1' : '0');
+}
+
+// Apply UI settings from local cache (sync, for first paint)
+export function applyUISettings() {
+  applyToDOM(readLocalUI());
+}
+
+// Load UI settings from disk-backed config (survives rebuilds / WebView resets)
+export async function loadUISettingsFromDisk(): Promise<void> {
+  try {
+    const res = await api.settings.getUISettings() as any;
+    if (!res || res.error) return;
+
+    // First run after upgrade: migrate localStorage → disk
+    if (!res.configured) {
+      const local = readLocalUI();
+      writeLocalUI(local);
+      applyToDOM(local);
+      try {
+        await api.settings.saveUISettings({
+          font: local.font,
+          font_size: local.fontSize,
+          scale: local.scale,
+          animations: local.animations,
+          blur: local.blur,
+        });
+      } catch { /* ignore */ }
+      return;
+    }
+
+    const settings = {
+      font: res.font || 'Inter',
+      fontSize: String(res.font_size || '14'),
+      scale: String(res.scale || '100'),
+      animations: res.animations !== false,
+      blur: res.blur_set ? !!res.blur : defaultBlur(),
+    };
+
+    writeLocalUI(settings);
+    applyToDOM(settings);
+  } catch {
+    // Backend not ready — keep localStorage values
+  }
+}
+
+// Persist UI settings to disk + localStorage and apply immediately
+export async function saveUISettings(partial: {
+  font?: string;
+  fontSize?: string;
+  scale?: string;
+  animations?: boolean;
+  blur?: boolean;
+}): Promise<void> {
+  const current = readLocalUI();
+  const next = {
+    font: partial.font ?? current.font,
+    fontSize: partial.fontSize ?? current.fontSize,
+    scale: partial.scale ?? current.scale,
+    animations: partial.animations ?? current.animations,
+    blur: partial.blur ?? current.blur,
+  };
+
+  writeLocalUI(next);
+  applyToDOM(next);
+
+  try {
+    await api.settings.saveUISettings({
+      font: next.font,
+      font_size: next.fontSize,
+      scale: next.scale,
+      animations: next.animations,
+      blur: next.blur,
+    });
+  } catch {
+    // Disk save failed — localStorage still has the value for this session
+  }
 }

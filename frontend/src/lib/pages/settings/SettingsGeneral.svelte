@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../../api/wails';
-  import { isPro, applyUISettings } from '../../stores/app';
+  import { isPro, saveUISettings, loadUISettingsFromDisk } from '../../stores/app';
   import { toastSuccess, toastError } from '../../stores/toast';
   import { autoFocus } from '../../actions/index';
   import Spinner from '../../components/Spinner.svelte';
   import ConfirmDialog from '../../components/ConfirmDialog.svelte';
   import AppSelect from '../../components/AppSelect.svelte';
+  import FilePicker from '../../components/FilePicker.svelte';
 
   // License
   let licenseLoading = $state(true);
@@ -68,6 +69,14 @@
   let confirmMessage = $state('');
   let confirmCallback = $state<(() => void) | null>(null);
 
+  // Library backup
+  let backupBusy = $state(false);
+  let backupMsg = $state('');
+  let backupErr = $state('');
+  let showExportPicker = $state(false);
+  let showImportPicker = $state(false);
+  let exportDefaultName = $state('yaria-library-backup.json');
+
   // --- Handlers ---
   function handleTMDBInput(e: Event) {
     const val = (e.target as HTMLInputElement).value;
@@ -114,42 +123,179 @@
   }
 
   function handleFontChange() {
-    localStorage.setItem('yaria_ui_font', uiFont);
-    applyUISettings();
+    saveUISettings({ font: uiFont });
   }
 
   function handleFontSizeChange() {
-    localStorage.setItem('yaria_ui_fontsize', uiFontSize);
-    applyUISettings();
+    saveUISettings({ fontSize: uiFontSize });
   }
 
   function handleScaleChange() {
-    localStorage.setItem('yaria_ui_scale', uiScale);
-    applyUISettings();
+    saveUISettings({ scale: uiScale });
   }
 
   function handleAnimationsChange() {
-    localStorage.setItem('yaria_ui_animations', uiAnimations ? '1' : '0');
-    applyUISettings();
+    saveUISettings({ animations: uiAnimations });
   }
 
   function handleBlurChange() {
-    localStorage.setItem('yaria_ui_blur', uiBlur ? '1' : '0');
-    applyUISettings();
+    saveUISettings({ blur: uiBlur });
   }
 
   function resetUIDefaults() {
-    localStorage.removeItem('yaria_ui_font');
-    localStorage.removeItem('yaria_ui_fontsize');
-    localStorage.removeItem('yaria_ui_scale');
-    localStorage.removeItem('yaria_ui_animations');
-    localStorage.removeItem('yaria_ui_blur');
     uiFont = 'Inter';
     uiFontSize = '14';
     uiScale = '100';
     uiAnimations = true;
-    uiBlur = true;
-    applyUISettings();
+    uiBlur = !navigator.platform.includes('Linux');
+    saveUISettings({
+      font: uiFont,
+      fontSize: uiFontSize,
+      scale: uiScale,
+      animations: uiAnimations,
+      blur: uiBlur,
+    });
+  }
+
+  function collectPlayerPositions(): Record<string, string> {
+    const out: Record<string, string> = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        // Resume positions + played magnets
+        if (
+          key.startsWith('pos_') ||
+          key.startsWith('local_') ||
+          key === 'yaria_played_magnets' ||
+          key.includes('magnet')
+        ) {
+          const val = localStorage.getItem(key);
+          if (val) out[key] = val;
+        }
+      }
+    } catch { /* ignore */ }
+    return out;
+  }
+
+  function restorePlayerPositions(positions: Record<string, string> | undefined) {
+    if (!positions || typeof positions !== 'object') return 0;
+    let n = 0;
+    try {
+      for (const [key, val] of Object.entries(positions)) {
+        if (typeof val === 'string') {
+          localStorage.setItem(key, val);
+          n++;
+        }
+      }
+    } catch { /* ignore */ }
+    return n;
+  }
+
+  function openExportPicker() {
+    const date = new Date().toISOString().slice(0, 10);
+    exportDefaultName = `yaria-library-backup-${date}.json`;
+    backupMsg = '';
+    backupErr = '';
+    showExportPicker = true;
+  }
+
+  function openImportPicker() {
+    backupMsg = '';
+    backupErr = '';
+    showImportPicker = true;
+  }
+
+  async function exportLibraryTo(path: string) {
+    showExportPicker = false;
+    if (!path) return;
+    backupBusy = true;
+    backupMsg = '';
+    backupErr = '';
+    try {
+      const res = await api.library.exportLibrary();
+      if (res?.error) {
+        backupErr = res.error;
+        toastError(res.error);
+        return;
+      }
+      let payload: any;
+      try {
+        payload = JSON.parse(res.data || '{}');
+      } catch {
+        payload = { library: { items: [] }, version: 1 };
+      }
+      payload.player_positions = collectPlayerPositions();
+      payload.app = payload.app || 'yaria';
+      payload.version = payload.version || 1;
+
+      const text = JSON.stringify(payload, null, 2);
+      const writeRes = await api.deps.writeTextFile(path, text);
+      if (writeRes?.error) {
+        backupErr = writeRes.error;
+        toastError(writeRes.error);
+        return;
+      }
+
+      const count = res.count ?? payload?.library?.items?.length ?? 0;
+      backupMsg = `Exported ${count} item${count === 1 ? '' : 's'} to ${path}`;
+      toastSuccess('Library exported');
+    } catch (e: any) {
+      backupErr = e?.message || 'Export failed';
+      toastError(backupErr);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  async function importLibraryFrom(path: string) {
+    showImportPicker = false;
+    if (!path) return;
+    backupBusy = true;
+    backupMsg = '';
+    backupErr = '';
+    try {
+      const fileRes = await api.deps.readTextFile(path);
+      if (fileRes?.error || !fileRes?.data) {
+        backupErr = fileRes?.error || 'Could not read file';
+        toastError(backupErr);
+        return;
+      }
+      const text = fileRes.data;
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        backupErr = 'Invalid backup file (not JSON)';
+        toastError(backupErr);
+        return;
+      }
+
+      const res = await api.library.importLibrary(text);
+      if (res?.error) {
+        backupErr = res.error;
+        toastError(res.error);
+        return;
+      }
+
+      const posN = restorePlayerPositions(parsed?.player_positions);
+      const added = res.added ?? 0;
+      const updated = res.updated ?? 0;
+      const parts = [
+        added ? `${added} added` : '',
+        updated ? `${updated} updated` : '',
+        posN ? `${posN} resume positions` : '',
+      ].filter(Boolean);
+      backupMsg = parts.length
+        ? `Import complete: ${parts.join(', ')}.`
+        : 'Import complete (nothing new to merge).';
+      toastSuccess(backupMsg);
+    } catch (err: any) {
+      backupErr = err?.message || 'Import failed';
+      toastError(backupErr);
+    } finally {
+      backupBusy = false;
+    }
   }
 
   async function activateLicense() {
@@ -208,8 +354,18 @@
     licenseLoading = false;
   }
 
-  onMount(() => {
+  onMount(async () => {
     loadLicense();
+
+    // Hydrate UI prefs from disk (source of truth across rebuilds)
+    await loadUISettingsFromDisk();
+    uiFont = localStorage.getItem('yaria_ui_font') || 'Inter';
+    uiFontSize = localStorage.getItem('yaria_ui_fontsize') || '14';
+    uiScale = localStorage.getItem('yaria_ui_scale') || '100';
+    uiAnimations = localStorage.getItem('yaria_ui_animations') !== '0';
+    uiBlur = localStorage.getItem('yaria_ui_blur')
+      ? localStorage.getItem('yaria_ui_blur') === '1'
+      : !navigator.platform.includes('Linux');
 
     // Load TMDB key
     api.settings.getTMDBKey().then((tmdbInfo: any) => {
@@ -377,6 +533,31 @@
       <button class="btn btn-ghost btn-sm reset-btn" onclick={resetUIDefaults}>Reset to Defaults</button>
     </div>
   </div>
+
+  <!-- Library Backup -->
+  {#if $isPro}
+    <div class="setting-group">
+      <div class="setting-label">Library Backup</div>
+      <div class="setting-desc">
+        Export your Mantorex library (titles, posters, watch progress) to a file.
+        On a new computer, import that file to restore everything as you left it.
+      </div>
+      <div class="backup-actions">
+        <button class="btn btn-primary btn-sm" onclick={openExportPicker} disabled={backupBusy}>
+          {backupBusy ? 'Working…' : 'Export Library'}
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick={openImportPicker} disabled={backupBusy}>
+          Import Library
+        </button>
+      </div>
+      {#if backupMsg}
+        <div class="msg-success">{backupMsg}</div>
+      {/if}
+      {#if backupErr}
+        <div class="msg-error">{backupErr}</div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <!-- Confirm Dialog for deactivation -->
@@ -385,6 +566,27 @@
     message={confirmMessage}
     onConfirm={() => { if (confirmCallback) confirmCallback(); }}
     onCancel={() => { showConfirm = false; }}
+  />
+{/if}
+
+{#if showExportPicker}
+  <FilePicker
+    mode="save"
+    title="Export Library"
+    fileExt="json"
+    defaultFileName={exportDefaultName}
+    onSelect={exportLibraryTo}
+    onClose={() => { showExportPicker = false; }}
+  />
+{/if}
+
+{#if showImportPicker}
+  <FilePicker
+    mode="open"
+    title="Import Library"
+    fileExt="json"
+    onSelect={importLibraryFrom}
+    onClose={() => { showImportPicker = false; }}
   />
 {/if}
 
@@ -577,6 +779,13 @@
 
   .reset-btn {
     color: $red !important;
+  }
+
+  .backup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
   }
 
   .text-dim {

@@ -5,14 +5,28 @@
   import { modalTransition, backdropFade } from '../utils/transition';
   import Spinner from './Spinner.svelte';
 
-  let { onSelect, onClose }: {
-    onSelect: (dir: string) => void;
+  let {
+    onSelect,
+    onClose,
+    mode = 'directory',
+    title = '',
+    fileExt = '',
+    defaultFileName = '',
+  }: {
+    onSelect: (path: string) => void;
     onClose: () => void;
+    /** directory = pick folder; open = pick existing file; save = folder + filename */
+    mode?: 'directory' | 'open' | 'save';
+    title?: string;
+    /** Comma-separated extensions without dots, e.g. "json" */
+    fileExt?: string;
+    defaultFileName?: string;
   } = $props();
 
   interface DirEntry {
     name: string;
     path: string;
+    is_dir?: boolean;
   }
 
   interface QuickAccess {
@@ -32,16 +46,38 @@
 
   let currentPath = $state('~');
   let selectedPath = $state('~');
-  let directories: DirEntry[] = $state([]);
+  let entries: DirEntry[] = $state([]);
   let loading = $state(true);
   let error = $state('');
   let activeQuickAccess = $state('');
+  let fileName = $state(defaultFileName || '');
+  let selectedFile = $state('');
 
   // New folder state
   let showNewFolderInput = $state(false);
   let newFolderName = $state('');
 
   let breadcrumbs = $derived(buildBreadcrumbs(currentPath));
+
+  let headerTitle = $derived(
+    title ||
+      (mode === 'open'
+        ? 'Open File'
+        : mode === 'save'
+          ? 'Save File'
+          : 'Choose Download Location')
+  );
+
+  let confirmLabel = $derived(
+    mode === 'open' ? 'Open' : mode === 'save' ? 'Save' : 'Select This Folder'
+  );
+
+  let canConfirm = $derived.by(() => {
+    if (mode === 'directory') return !!selectedPath;
+    if (mode === 'open') return !!selectedFile;
+    if (mode === 'save') return !!selectedPath && !!fileName.trim();
+    return false;
+  });
 
   function buildBreadcrumbs(path: string): { label: string; path: string }[] {
     const parts = path.split('/').filter((p) => p);
@@ -64,17 +100,23 @@
   async function navigateTo(path: string) {
     currentPath = path;
     selectedPath = path;
+    selectedFile = '';
     loading = true;
     error = '';
     showNewFolderInput = false;
     newFolderName = '';
 
     try {
-      const dirs = await deps.listDirectories(path);
-      directories = dirs || [];
-    } catch (e) {
+      if (mode === 'directory') {
+        const dirs = await deps.listDirectories(path);
+        entries = (dirs || []).map((d) => ({ ...d, is_dir: true }));
+      } else {
+        const list = await deps.listEntries(path, fileExt);
+        entries = list || [];
+      }
+    } catch {
       error = 'Cannot access this folder';
-      directories = [];
+      entries = [];
     } finally {
       loading = false;
     }
@@ -85,10 +127,51 @@
     navigateTo(loc.path);
   }
 
-  function handleSelect() {
-    if (selectedPath) {
-      onSelect(selectedPath);
+  function handleEntryClick(entry: DirEntry) {
+    if (mode === 'directory' || entry.is_dir) {
+      navigateTo(entry.path);
+      return;
     }
+    // File
+    selectedFile = entry.path;
+    selectedPath = currentPath;
+    if (mode === 'save') {
+      fileName = entry.name;
+    }
+  }
+
+  function handleEntryDblClick(entry: DirEntry) {
+    if (entry.is_dir) {
+      navigateTo(entry.path);
+      return;
+    }
+    if (mode === 'open') {
+      selectedFile = entry.path;
+      handleSelect();
+    }
+  }
+
+  function handleSelect() {
+    if (mode === 'directory') {
+      if (selectedPath) onSelect(selectedPath);
+      return;
+    }
+    if (mode === 'open') {
+      if (selectedFile) onSelect(selectedFile);
+      return;
+    }
+    // save
+    const name = fileName.trim();
+    if (!selectedPath || !name) return;
+    let finalName = name;
+    if (fileExt) {
+      const primary = fileExt.split(',')[0].trim().replace(/^\./, '');
+      if (primary && !finalName.toLowerCase().endsWith('.' + primary.toLowerCase())) {
+        finalName += '.' + primary;
+      }
+    }
+    const join = selectedPath.endsWith('/') ? selectedPath + finalName : selectedPath + '/' + finalName;
+    onSelect(join);
   }
 
   function handleNewFolder() {
@@ -122,6 +205,7 @@
   }
 
   onMount(() => {
+    if (defaultFileName) fileName = defaultFileName;
     navigateTo('~');
   });
 </script>
@@ -137,7 +221,7 @@
 >
   <div class="fp-modal" use:focusTrap transition:modalTransition>
     <div class="fp-header">
-      <h3>Choose Download Location</h3>
+      <h3>{headerTitle}</h3>
       <button class="fp-close" onclick={onClose} title="Cancel">&times;</button>
     </div>
 
@@ -192,41 +276,61 @@
             </div>
           {:else if error}
             <div class="fp-list-msg fp-error">{error}</div>
-          {:else if directories.length === 0}
+          {:else if entries.length === 0}
             <div class="fp-list-msg">Empty folder</div>
           {:else}
-            {#each directories as dir}
-              <button class="fp-dir-item" onclick={() => navigateTo(dir.path)}>
-                <span class="fp-dir-icon">📁</span>
-                <span class="fp-dir-name">{dir.name}</span>
+            {#each entries as entry}
+              <button
+                class="fp-dir-item"
+                class:selected={selectedFile === entry.path}
+                onclick={() => handleEntryClick(entry)}
+                ondblclick={() => handleEntryDblClick(entry)}
+              >
+                <span class="fp-dir-icon">{entry.is_dir === false ? '📄' : '📁'}</span>
+                <span class="fp-dir-name">{entry.name}</span>
               </button>
             {/each}
           {/if}
         </div>
+
+        {#if mode === 'save'}
+          <div class="fp-filename-row">
+            <label class="fp-filename-label" for="fp-filename">File name</label>
+            <input
+              id="fp-filename"
+              type="text"
+              class="fp-path-input"
+              bind:value={fileName}
+              placeholder="backup.json"
+            />
+          </div>
+        {/if}
       </div>
     </div>
 
     <div class="fp-footer">
       <div class="fp-new-folder">
-        {#if showNewFolderInput}
-          <input
-            type="text"
-            class="fp-new-input"
-            placeholder="New folder name..."
-            bind:value={newFolderName}
-            onkeydown={handleNewFolderKeydown}
-          />
+        {#if mode !== 'open'}
+          {#if showNewFolderInput}
+            <input
+              type="text"
+              class="fp-new-input"
+              placeholder="New folder name..."
+              bind:value={newFolderName}
+              onkeydown={handleNewFolderKeydown}
+            />
+          {/if}
+          <button class="btn btn-ghost btn-sm" onclick={handleNewFolder}>New Folder</button>
         {/if}
-        <button class="btn btn-ghost btn-sm" onclick={handleNewFolder}>New Folder</button>
       </div>
       <div class="fp-actions">
         <button class="btn btn-ghost btn-sm" onclick={onClose}>Cancel</button>
         <button
           class="btn btn-primary btn-sm"
-          disabled={!selectedPath}
+          disabled={!canConfirm}
           onclick={handleSelect}
         >
-          Select This Folder
+          {confirmLabel}
         </button>
       </div>
     </div>
@@ -241,13 +345,10 @@
     inset: 0;
     z-index: 9999;
     @include flex-center;
-    // Darker overlay since backdrop-filter blur is disabled on WebKitGTK
     background: rgba(0, 0, 0, 0.8);
   }
 
   .fp-modal {
-    // Solid opaque background — glass mixin (3% white) is unreadable on
-    // WebKitGTK where backdrop-filter is disabled (content shows through).
     background: #14141f;
     border: 1px solid $border-glass-hover;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
@@ -317,34 +418,30 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px;
+    width: 100%;
+    padding: 8px 10px;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: 13px;
     color: $text-dim;
     text-align: left;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s;
 
-    &:hover {
-      background: $bg-glass-hover;
-      color: $text;
-    }
-
+    &:hover,
     &.active {
-      background: rgba($accent, 0.15);
-      color: $accent-hover;
+      background: rgba(255, 255, 255, 0.06);
+      color: $text;
     }
   }
 
   .fp-quick-icon {
     font-size: 14px;
-    flex-shrink: 0;
   }
 
   .fp-current-path {
     font-size: 11px;
     color: $text-muted;
     word-break: break-all;
-    padding: 4px 0;
+    line-height: 1.4;
   }
 
   .fp-main {
@@ -352,74 +449,71 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    padding: 16px;
+    gap: 10px;
   }
 
   .fp-breadcrumb {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 4px;
-    padding: 12px 16px;
-    border-bottom: 1px solid $border-glass;
-    flex-wrap: wrap;
+    font-size: 12px;
   }
 
   .fp-bc-item {
+    color: $text-dim;
+    background: none;
+    border: none;
+    padding: 0;
     font-size: 12px;
-    color: $text-muted;
-    padding: 2px 6px;
-    border-radius: 4px;
-    transition: color 0.15s;
-
-    &:hover:not(.active) {
-      color: $accent-hover;
-    }
+    cursor: pointer;
 
     &.active {
       color: $text;
-      font-weight: 500;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    &:not(.active):hover {
+      color: $accent;
     }
   }
 
   .fp-bc-sep {
-    font-size: 11px;
     color: $text-muted;
   }
 
   .fp-path-input-wrap {
-    padding: 8px 16px;
-    border-bottom: 1px solid $border-glass;
+    width: 100%;
   }
 
   .fp-path-input {
     width: 100%;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, 0.03);
+    padding: 8px 12px;
+    border-radius: 8px;
     border: 1px solid $border-glass;
-    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
     color: $text;
-    font-size: 12px;
-    font-family: monospace;
-    outline: none;
-
-    &:focus {
-      border-color: rgba($accent, 0.3);
-    }
+    font-size: 13px;
   }
 
   .fp-list {
     flex: 1;
+    min-height: 180px;
+    max-height: 320px;
     overflow-y: auto;
-    padding: 8px;
-    min-height: 200px;
-    max-height: 360px;
+    border: 1px solid $border-glass;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.15);
   }
 
   .fp-list-msg {
     @include flex-center;
-    flex-direction: column;
-    padding: 20px;
+    padding: 32px;
     color: $text-muted;
     font-size: 13px;
+    gap: 10px;
   }
 
   .fp-error {
@@ -431,57 +525,76 @@
     align-items: center;
     gap: 10px;
     width: 100%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    text-align: left;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    color: $text;
     font-size: 13px;
-    color: $text-dim;
-    transition: all 0.15s;
+    text-align: left;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 
-    &:hover {
-      background: $bg-glass-hover;
-      color: $text;
+    &:hover,
+    &.selected {
+      background: rgba(139, 108, 239, 0.12);
+    }
+
+    &.selected {
+      color: $accent-hover;
     }
   }
 
   .fp-dir-icon {
-    font-size: 16px;
-    flex-shrink: 0;
+    font-size: 15px;
   }
 
   .fp-dir-name {
-    @include truncate;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fp-filename-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .fp-filename-label {
+    font-size: 11px;
+    color: $text-muted;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   .fp-footer {
     @include flex-between;
     padding: 14px 20px;
     border-top: 1px solid $border-glass;
+    gap: 12px;
   }
 
   .fp-new-folder {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
   }
 
   .fp-new-input {
-    padding: 5px 10px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid $border-glass;
-    border-radius: 6px;
-    color: $text;
-    font-size: 12px;
-    outline: none;
     width: 160px;
-
-    &:focus {
-      border-color: rgba($accent, 0.3);
-    }
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid $border-glass;
+    background: rgba(0, 0, 0, 0.25);
+    color: $text;
+    font-size: 13px;
   }
 
   .fp-actions {
     display: flex;
     gap: 8px;
+    flex-shrink: 0;
   }
 </style>

@@ -69,6 +69,22 @@ export const settings = {
     call(() => wails().SettingsService.GetCacheStats()),
   clearCache: (type: string): Promise<any> =>
     call(() => wails().SettingsService.ClearCache(type)),
+  getUISettings: (): Promise<{
+    font: string;
+    font_size: string;
+    scale: string;
+    animations: boolean;
+    blur: boolean;
+    blur_set?: boolean;
+    configured?: boolean;
+  }> => call(() => wails().SettingsService.GetUISettings()),
+  saveUISettings: (settings: {
+    font?: string;
+    font_size?: string;
+    scale?: string;
+    animations?: boolean;
+    blur?: boolean;
+  }): Promise<any> => call(() => wails().SettingsService.SaveUISettings(settings)),
 };
 
 // === Downloads (Yaria) ===
@@ -117,6 +133,12 @@ export const deps = {
     call(() => wails().DepsService.FFmpegPath()),
   listDirectories: (path: string): Promise<{ name: string; path: string }[]> =>
     call(() => wails().DepsService.ListDirectories(path)),
+  listEntries: (path: string, fileExt = ''): Promise<{ name: string; path: string; is_dir?: boolean }[]> =>
+    call(() => wails().DepsService.ListEntries(path, fileExt)),
+  readTextFile: (path: string): Promise<{ data?: string; path?: string; error?: string }> =>
+    call(() => wails().DepsService.ReadTextFile(path)),
+  writeTextFile: (path: string, content: string): Promise<{ status?: string; path?: string; error?: string }> =>
+    call(() => wails().DepsService.WriteTextFile(path, content)),
 };
 
 // === Torrent Search ===
@@ -197,6 +219,10 @@ export const library = {
     call(() => wails().LibraryService.FindByTMDBID(tmdbId, mediaType)),
   findByTitle: (title: string, mediaType: string, year: string): Promise<LibraryItem | null> =>
     call(() => wails().LibraryService.FindByTitle(title, mediaType, year)),
+  exportLibrary: (): Promise<{ data?: string; count?: number; error?: string }> =>
+    call(() => wails().LibraryService.ExportLibrary()),
+  importLibrary: (jsonData: string): Promise<{ status?: string; added?: number; updated?: number; skipped?: number; total?: number; error?: string }> =>
+    call(() => wails().LibraryService.ImportLibrary(jsonData)),
 };
 
 // === Torrent Downloads ===
