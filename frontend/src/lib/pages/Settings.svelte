@@ -1,18 +1,22 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, type Component } from 'svelte';
   import { api } from '../api/wails';
 
   import SettingsGeneral from './settings/SettingsGeneral.svelte';
   import SettingsDownloader from './settings/SettingsDownloader.svelte';
-  import SettingsTorrents from './settings/SettingsTorrents.svelte';
-  import SettingsMedia from './settings/SettingsMedia.svelte';
-  import SettingsServer from './settings/SettingsServer.svelte';
   import SettingsAbout from './settings/SettingsAbout.svelte';
+
+  // Pro settings panels are closed-source — present only in pro checkouts.
+  const proSettingsGlob = import.meta.glob('./settings/Settings{Torrents,Media,Server}.svelte');
 
   let activeSection = $state('general');
   let settingsPro = $state(false);
   let proLoaded = $state(false);
   let appVersion = $state('');
+  let SettingsTorrents = $state<Component | null>(null);
+  let SettingsMedia = $state<Component | null>(null);
+  let SettingsServer = $state<Component | null>(null);
+  let hasProSettings = $state(false);
 
   const baseSections = [
     { id: 'general', label: 'General', icon: 'gear' },
@@ -29,12 +33,23 @@
 
   let sections = $derived([
     ...baseSections,
-    ...(settingsPro ? proSections : []),
+    ...(settingsPro && hasProSettings ? proSections : []),
     aboutSection,
   ]);
 
   function goBack() {
     window.history.back();
+  }
+
+  async function loadProPanel(path: string): Promise<Component | null> {
+    const loader = proSettingsGlob[path];
+    if (!loader) return null;
+    try {
+      const mod = await loader() as { default: Component };
+      return mod.default;
+    } catch {
+      return null;
+    }
   }
 
   onMount(async () => {
@@ -43,6 +58,12 @@
     } catch {
       settingsPro = false;
     }
+
+    SettingsTorrents = await loadProPanel('./settings/SettingsTorrents.svelte');
+    SettingsMedia = await loadProPanel('./settings/SettingsMedia.svelte');
+    SettingsServer = await loadProPanel('./settings/SettingsServer.svelte');
+    hasProSettings = !!(SettingsTorrents || SettingsMedia || SettingsServer);
+
     proLoaded = true;
 
     try {
@@ -92,11 +113,11 @@
         <SettingsGeneral />
       {:else if activeSection === 'downloader'}
         <SettingsDownloader />
-      {:else if activeSection === 'torrents' && settingsPro}
+      {:else if activeSection === 'torrents' && settingsPro && SettingsTorrents}
         <SettingsTorrents />
-      {:else if activeSection === 'media' && settingsPro}
+      {:else if activeSection === 'media' && settingsPro && SettingsMedia}
         <SettingsMedia />
-      {:else if activeSection === 'server' && settingsPro}
+      {:else if activeSection === 'server' && settingsPro && SettingsServer}
         <SettingsServer />
       {:else if activeSection === 'about'}
         <SettingsAbout />

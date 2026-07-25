@@ -3,7 +3,7 @@ build/
 YariaApp
 packaging/dist/
 
-# Proprietary Mantorex services (not opensource)
+# Proprietary Mantorex backend services (not opensource)
 search_service.go
 stream_service.go
 library_service.go
@@ -41,12 +41,18 @@ frontend/src/lib/pages/LocalHome.svelte
 frontend/src/lib/pages/RemoteHome.svelte
 frontend/src/lib/pages/TorrentDownloads.svelte
 
-# Mantorex frontend - Svelte components (proprietary)
+# Mantorex frontend - Svelte settings panels (proprietary)
+frontend/src/lib/pages/settings/SettingsTorrents.svelte
+frontend/src/lib/pages/settings/SettingsMedia.svelte
+frontend/src/lib/pages/settings/SettingsServer.svelte
+
+# Mantorex frontend - Svelte components / utils (proprietary)
+# ProGate.svelte stays public (license/trial upgrade UI only)
 frontend/src/lib/components/TorrentList.svelte
 frontend/src/lib/components/ModeSwitcher.svelte
-
-# App router imports pro pages (won't compile without them)
-frontend/src/App.svelte
+frontend/src/lib/components/PosterCard.svelte
+frontend/src/lib/components/PosterRow.svelte
+frontend/src/lib/utils/torrent.ts
 
 # Backup of old frontend (contains pro code)
 frontend/src_backup/
