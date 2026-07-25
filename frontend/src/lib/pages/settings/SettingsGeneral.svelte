@@ -33,10 +33,10 @@
   let formatFilterEnabled = $state(localStorage.getItem('yaria_show_all_formats') !== '1');
 
   // Appearance
-  let uiFont = $state(localStorage.getItem('yaria_ui_font') || 'Inter');
+  let uiFont = $state(localStorage.getItem('yaria_ui_font') || 'Roboto');
   let uiFontSize = $state(localStorage.getItem('yaria_ui_fontsize') || '14');
   let uiScale = $state(localStorage.getItem('yaria_ui_scale') || '100');
-  let uiAnimations = $state(localStorage.getItem('yaria_ui_animations') !== '0');
+  let uiAnimations = $state(localStorage.getItem('yaria_ui_animations') === '1');
   let uiBlur = $state(
     localStorage.getItem('yaria_ui_blur')
       ? localStorage.getItem('yaria_ui_blur') === '1'
@@ -45,11 +45,11 @@
 
   // Font options
   const fontOptions = [
-    { value: 'Inter', label: 'Inter (Default)' },
+    { value: 'Roboto', label: 'Roboto (Default)' },
+    { value: 'Inter', label: 'Inter' },
     { value: 'system-ui', label: 'System Default' },
     { value: "'SF Pro Display', -apple-system, BlinkMacSystemFont", label: 'SF Pro (macOS)' },
     { value: "'Segoe UI'", label: 'Segoe UI (Windows)' },
-    { value: 'Roboto', label: 'Roboto' },
     { value: "'JetBrains Mono', monospace", label: 'JetBrains Mono' },
     { value: "'Fira Code', monospace", label: 'Fira Code' },
     { value: 'monospace', label: 'Monospace' },
@@ -143,10 +143,10 @@
   }
 
   function resetUIDefaults() {
-    uiFont = 'Inter';
+    uiFont = 'Roboto';
     uiFontSize = '14';
     uiScale = '100';
-    uiAnimations = true;
+    uiAnimations = false;
     uiBlur = !navigator.platform.includes('Linux');
     saveUISettings({
       font: uiFont,
@@ -359,10 +359,10 @@
 
     // Hydrate UI prefs from disk (source of truth across rebuilds)
     await loadUISettingsFromDisk();
-    uiFont = localStorage.getItem('yaria_ui_font') || 'Inter';
+    uiFont = localStorage.getItem('yaria_ui_font') || 'Roboto';
     uiFontSize = localStorage.getItem('yaria_ui_fontsize') || '14';
     uiScale = localStorage.getItem('yaria_ui_scale') || '100';
-    uiAnimations = localStorage.getItem('yaria_ui_animations') !== '0';
+    uiAnimations = localStorage.getItem('yaria_ui_animations') === '1';
     uiBlur = localStorage.getItem('yaria_ui_blur')
       ? localStorage.getItem('yaria_ui_blur') === '1'
       : !navigator.platform.includes('Linux');

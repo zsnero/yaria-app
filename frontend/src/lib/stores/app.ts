@@ -27,10 +27,11 @@ function defaultBlur(): boolean {
 
 function readLocalUI() {
   return {
-    font: localStorage.getItem('yaria_ui_font') || 'Inter',
+    font: localStorage.getItem('yaria_ui_font') || 'Roboto',
     fontSize: localStorage.getItem('yaria_ui_fontsize') || '14',
     scale: localStorage.getItem('yaria_ui_scale') || '100',
-    animations: localStorage.getItem('yaria_ui_animations') !== '0',
+    // Animations OFF by default on first install
+    animations: localStorage.getItem('yaria_ui_animations') === '1',
     blur: localStorage.getItem('yaria_ui_blur')
       ? localStorage.getItem('yaria_ui_blur') === '1'
       : defaultBlur(),
@@ -134,10 +135,10 @@ export async function loadUISettingsFromDisk(): Promise<void> {
     }
 
     const settings = {
-      font: res.font || 'Inter',
+      font: res.font || 'Roboto',
       fontSize: String(res.font_size || '14'),
       scale: String(res.scale || '100'),
-      animations: res.animations !== false,
+      animations: !!res.animations,
       blur: res.blur_set ? !!res.blur : defaultBlur(),
     };
 

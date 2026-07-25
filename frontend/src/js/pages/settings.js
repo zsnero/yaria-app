@@ -91,11 +91,11 @@ async function renderSettings(container) {
               <div>
                 <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px;">Font Family</label>
                 <select id="ui-font-family" class="setting-input" style="font-size:13px;">
-                  <option value="Inter">Inter (Default)</option>
+                  <option value="Roboto">Roboto (Default)</option>
+                  <option value="Inter">Inter</option>
                   <option value="system-ui">System Default</option>
                   <option value="'SF Pro Display', -apple-system, BlinkMacSystemFont">SF Pro (macOS)</option>
                   <option value="'Segoe UI'">Segoe UI (Windows)</option>
-                  <option value="Roboto">Roboto</option>
                   <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
                   <option value="'Fira Code', monospace">Fira Code</option>
                   <option value="monospace">Monospace</option>
@@ -367,13 +367,13 @@ async function renderSettings(container) {
   }
 
   // --- UI Customization ---
-  const uiDefaults = { fontFamily: 'Inter', fontSize: '14', scale: '100', animations: true, blur: true };
+  const uiDefaults = { fontFamily: 'Roboto', fontSize: '14', scale: '100', animations: false, blur: true };
 
   // Load saved values
   const savedFont = localStorage.getItem('yaria_ui_font') || uiDefaults.fontFamily;
   const savedSize = localStorage.getItem('yaria_ui_fontsize') || uiDefaults.fontSize;
   const savedScale = localStorage.getItem('yaria_ui_scale') || uiDefaults.scale;
-  const savedAnims = localStorage.getItem('yaria_ui_animations') !== '0';
+  const savedAnims = localStorage.getItem('yaria_ui_animations') === '1';
   const savedBlur = localStorage.getItem('yaria_ui_blur') !== '0';
 
   const fontSelect = page.querySelector('#ui-font-family');

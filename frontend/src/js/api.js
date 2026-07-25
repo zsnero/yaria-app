@@ -246,6 +246,9 @@ const API = {
   async resumeTorrentDownload(id) {
     return window.go.main.TorrentDownloadService.ResumeDownload(id);
   },
+  async reannounceTorrentDownload(id) {
+    return window.go.main.TorrentDownloadService.ReannounceDownload(id);
+  },
   async getTorrentDownloadDir() {
     return window.go.main.TorrentDownloadService.GetDownloadDir();
   },
@@ -556,10 +559,9 @@ function appConfirm(message, onConfirm, onCancel) {
 // Called on app load and when settings change.
 function applyUISettings() {
   const root = document.documentElement;
-  const font = localStorage.getItem('yaria_ui_font') || 'Inter';
+  const font = localStorage.getItem('yaria_ui_font') || 'Roboto';
   const size = localStorage.getItem('yaria_ui_fontsize') || '14';
-  const scale = localStorage.getItem('yaria_ui_scale') || '100';
-  const anims = localStorage.getItem('yaria_ui_animations') !== '0';
+  const anims = localStorage.getItem('yaria_ui_animations') === '1';
   const blur = localStorage.getItem('yaria_ui_blur') !== '0';
 
   root.style.setProperty('--app-font', font + ', sans-serif');
