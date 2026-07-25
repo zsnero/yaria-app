@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	AppVersion    = "2.3.7"
+	AppVersion    = "2.3.8"
 	UpdateBaseURL = "https://yaria.live/download"
 )
 
