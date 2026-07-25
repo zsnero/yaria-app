@@ -15,6 +15,9 @@ remote_service.go
 media_server.go
 dlna_service.go
 
+# Built-in secrets (pro only — never commit)
+tmdb_builtin.go
+
 # Mantorex frontend - old JS (proprietary)
 frontend/src/css/pro.css
 frontend/src/js/pages/home.js

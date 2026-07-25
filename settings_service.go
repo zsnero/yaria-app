@@ -29,17 +29,28 @@ type SettingsService struct{}
 var refreshTMDBClients = func(key string) {}
 
 // GetTMDBKey returns the saved TMDB API key (masked for display).
+// When using the built-in fallback key, the secret is never returned to the UI.
 func (s *SettingsService) GetTMDBKey() map[string]interface{} {
-	key := appconfig.TMDBApiKey()
-	if key == "" {
-		return map[string]interface{}{"key": "", "configured": false}
+	userKey := appconfig.UserTMDBApiKey()
+	if userKey != "" {
+		masked := userKey
+		if len(userKey) > 8 {
+			masked = userKey[:4] + strings.Repeat("*", len(userKey)-8) + userKey[len(userKey)-4:]
+		}
+		return map[string]interface{}{
+			"key":           masked,
+			"configured":    true,
+			"using_default": false,
+		}
 	}
-	// Mask the key for display: show first 4 and last 4 chars
-	masked := key
-	if len(key) > 8 {
-		masked = key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
+	if appconfig.UsingBuiltinTMDB() {
+		return map[string]interface{}{
+			"key":           "",
+			"configured":    true,
+			"using_default": true,
+		}
 	}
-	return map[string]interface{}{"key": masked, "configured": true}
+	return map[string]interface{}{"key": "", "configured": false, "using_default": false}
 }
 
 // SaveTMDBKey saves the TMDB API key to config.

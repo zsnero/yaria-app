@@ -21,6 +21,7 @@
   // TMDB
   let tmdbKey = $state('');
   let tmdbError = $state('');
+  let tmdbUsingDefault = $state(false);
   let tmdbDebounce: ReturnType<typeof setTimeout> | null = null;
 
   // Proxy
@@ -82,10 +83,16 @@
     const val = (e.target as HTMLInputElement).value;
     tmdbKey = val;
     tmdbError = '';
+    tmdbUsingDefault = false;
     if (tmdbDebounce) clearTimeout(tmdbDebounce);
     tmdbDebounce = setTimeout(async () => {
       try {
         await api.settings.saveTMDBKey(val.trim());
+        // Empty field → falls back to built-in key
+        if (!val.trim()) {
+          const info = await api.settings.getTMDBKey();
+          tmdbUsingDefault = !!info?.using_default;
+        }
         toastSuccess('Settings saved');
       } catch (err: any) {
         toastError('Failed to save: ' + (err.message || ''));
@@ -367,9 +374,14 @@
       ? localStorage.getItem('yaria_ui_blur') === '1'
       : !navigator.platform.includes('Linux');
 
-    // Load TMDB key
+    // Load TMDB key (built-in default is never shown; only user override is)
     api.settings.getTMDBKey().then((tmdbInfo: any) => {
-      if (tmdbInfo?.configured) tmdbKey = tmdbInfo.key;
+      tmdbUsingDefault = !!tmdbInfo?.using_default;
+      if (tmdbInfo?.configured && !tmdbInfo?.using_default) {
+        tmdbKey = tmdbInfo.key || '';
+      } else {
+        tmdbKey = '';
+      }
     }).catch(() => {});
 
     // Load proxy
@@ -448,11 +460,18 @@
   <!-- TMDB -->
   <div class="setting-group">
     <div class="setting-label">TMDB API Key</div>
-    <div class="setting-desc">Enables trending content, posters, and metadata. Get a free key at <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a>.</div>
+    <div class="setting-desc">
+      Enables trending content, posters, and metadata.
+      {#if tmdbUsingDefault}
+        Using the built-in key — optional: enter your own to override.
+      {:else}
+        Get a free key at <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a>.
+      {/if}
+    </div>
     <input
       type="text"
       class="setting-input"
-      placeholder="Enter your TMDB API key"
+      placeholder={tmdbUsingDefault ? 'Built-in key active (optional override)' : 'Enter your TMDB API key'}
       value={tmdbKey}
       oninput={handleTMDBInput}
     />
