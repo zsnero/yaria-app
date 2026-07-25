@@ -81,8 +81,13 @@ export interface RemoteSource {
   host: string;
   port: number;
   type: 'ssh' | 'smb' | 'ftp' | 'http';
+  user?: string;
+  /** @deprecated use user */
   username?: string;
+  key_path?: string;
+  share?: string;
   base_path?: string;
+  password?: string;
 }
 
 export interface RemoteFile {
