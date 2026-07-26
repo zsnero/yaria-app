@@ -36,6 +36,9 @@ const API = {
   async fetchMetadata(url) {
     return window.go.main.DownloadService.FetchMetadata(url);
   },
+  async fetchInfo(url) {
+    return window.go.main.DownloadService.FetchInfo(url);
+  },
   async listFormats(url) {
     return window.go.main.DownloadService.ListFormats(url);
   },

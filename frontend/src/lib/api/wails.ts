@@ -93,6 +93,9 @@ export const settings = {
 export const downloads = {
   getMetadata: (url: string): Promise<any> =>
     call(() => wails().DownloadService.FetchMetadata(url)),
+  // Single yt-dlp call: metadata + formats together
+  fetchInfo: (url: string): Promise<any> =>
+    call(() => wails().DownloadService.FetchInfo(url)),
   start: (url: string, resolution: string, dir: string, audioOnly: boolean, audioFormat: string, containerFormat?: string): Promise<any> =>
     call(() => wails().DownloadService.StartDownload(url, resolution, dir, audioOnly, audioFormat, containerFormat || 'mp4')),
   cancel: (id: string): Promise<any> =>

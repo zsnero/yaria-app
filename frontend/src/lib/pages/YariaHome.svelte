@@ -59,7 +59,6 @@
   let urlInput: HTMLInputElement | undefined = $state();
 
   // Format grid options
-  const defaultResolutions = ['2160p', '1440p', '1080p', '720p', '480p', '360p'];
   const audioFormats = ['mp3', 'm4a', 'opus', 'wav', 'flac'];
 
   let videoFormatOptions = $derived.by(() => {
@@ -71,7 +70,6 @@
         size: typeof f.filesize === 'string' && f.filesize ? f.filesize : '',
       }));
     }
-    // Don't show default resolutions — just "Best" until loadFormats completes
     return [];
   });
 
@@ -154,16 +152,37 @@
     if (!cleaned) return;
     url = cleaned;
     meta = null;
+    formats = { video: [], audio: [] };
     selectedFormat = 'best';
     fetchError = '';
     fetching = true;
 
     try {
-      meta = await api.downloads.getMetadata(cleaned);
-      // Load formats in background
-      loadFormats(cleaned);
+      // Single yt-dlp call returns title + qualities together
+      const info = await api.downloads.fetchInfo(cleaned);
+      if (info?.error) {
+        throw new Error(info.error);
+      }
+      meta = info;
+      formats = {
+        video: info?.video || [],
+        audio: info?.audio || [],
+      };
     } catch (err: any) {
-      fetchError = err?.message || 'Failed to fetch metadata';
+      // Fallback: metadata first, formats in parallel background
+      try {
+        const formatsPromise = api.downloads.listFormats(cleaned);
+        meta = await api.downloads.getMetadata(cleaned);
+        const result = await formatsPromise;
+        if (result && !result.error) {
+          formats = {
+            video: result.video || [],
+            audio: result.audio || [],
+          };
+        }
+      } catch (err2: any) {
+        fetchError = err2?.message || err?.message || 'Failed to fetch metadata';
+      }
     } finally {
       fetching = false;
     }
@@ -171,18 +190,6 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') doFetch();
-  }
-
-  async function loadFormats(fetchUrl: string) {
-    try {
-      const result = await api.downloads.listFormats(fetchUrl);
-      if (result && !result.error) {
-        formats = {
-          video: result.video || [],
-          audio: result.audio || [],
-        };
-      }
-    } catch { /* ignore */ }
   }
 
   function selectVideoFormat(key: string) {

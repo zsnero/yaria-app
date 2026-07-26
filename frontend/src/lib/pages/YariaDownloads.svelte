@@ -4,6 +4,7 @@
   import { tweened } from 'svelte/motion';
   import { cubicOut } from 'svelte/easing';
   import { api } from '../api/wails';
+  import { navigate } from '../stores/app';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import Spinner from '../components/Spinner.svelte';
 
@@ -166,10 +167,41 @@
       confirmMessage = '';
       confirmAction = null;
       try {
-        await api.downloads.remove(id);
+        await api.downloads.deleteDownloadFiles(id);
         refreshList();
       } catch { /* ignore */ }
     };
+  }
+
+  async function playDownload(dl: DownloadItem) {
+    try {
+      let path = dl.file_path || '';
+      if (!path) {
+        const res = await api.downloads.playDownloadedFile(dl.id);
+        if (res?.error) {
+          confirmMessage = res.error;
+          confirmAction = () => { confirmMessage = ''; confirmAction = null; };
+          return;
+        }
+        path = res?.file || res?.path || '';
+      }
+      if (!path && dl.download_dir) {
+        const pf = await api.player.playFile(dl.download_dir);
+        path = pf?.file || '';
+      }
+      if (!path) {
+        confirmMessage = 'File path not found';
+        confirmAction = () => { confirmMessage = ''; confirmAction = null; };
+        return;
+      }
+      // Resolve dirs → video file, then open in-app player
+      const pf = await api.player.playFile(path);
+      const file = pf?.file || path;
+      navigate(`#/play?file=${encodeURIComponent(file)}&title=${encodeURIComponent(dl.title || pf?.title || 'Download')}`);
+    } catch (e: any) {
+      confirmMessage = e?.message || 'Failed to play';
+      confirmAction = () => { confirmMessage = ''; confirmAction = null; };
+    }
   }
 
   function cancelConfirm() {
@@ -310,7 +342,7 @@
           </div>
           <div class="download-item-actions">
             {#if dl.status === 'complete'}
-              <button class="btn btn-primary btn-sm" title="Play">
+              <button class="btn btn-primary btn-sm" title="Play" onclick={() => playDownload(dl)}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z"/>
                 </svg>

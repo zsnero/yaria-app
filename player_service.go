@@ -48,6 +48,7 @@ func (p *PlayerService) PlayFile(filePath string) map[string]interface{} {
 	if filePath == "" {
 		return map[string]interface{}{"error": "no file path"}
 	}
+	filePath = expandTilde(filePath)
 
 	info, err := os.Stat(filePath)
 	if err != nil {

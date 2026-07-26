@@ -153,7 +153,29 @@ async function renderYariaHome(container) {
     </div>`;
 
     try {
-      const meta = await API.fetchMetadata(url);
+      let meta = null;
+      formats = { video: [], audio: [] };
+
+      // Prefer single yt-dlp call (metadata + formats together)
+      if (API.fetchInfo) {
+        try {
+          const info = await API.fetchInfo(url);
+          if (info && !info.error) {
+            meta = info;
+            formats.video = info.video || [];
+            formats.audio = info.audio || [];
+          }
+        } catch (e) { /* fall through */ }
+      }
+      if (!meta) {
+        const formatsPromise = API.listFormats(url).catch(() => null);
+        meta = await API.fetchMetadata(url);
+        const result = await formatsPromise;
+        if (result && !result.error) {
+          formats.video = result.video || [];
+          formats.audio = result.audio || [];
+        }
+      }
       currentMeta = meta;
 
       // Build the unified card: thumbnail + info + formats + download button
@@ -230,9 +252,6 @@ async function renderYariaHome(container) {
       const startBtn = content.querySelector('#dl-start-btn');
       startBtn.addEventListener('click', () => startDownload(url, startBtn));
 
-      // Fetch formats in background
-      loadFormats(url);
-
     } catch (err) {
       content.innerHTML = `<div class="dl-card"><div class="no-results" style="padding:20px;">Failed: ${esc(err.message)}</div></div>`;
     }
@@ -300,15 +319,6 @@ async function renderYariaHome(container) {
         selectedFormat = card.dataset.format;
       });
     });
-  }
-
-  async function loadFormats(url) {
-    try {
-      const result = await API.listFormats(url);
-      formats.video = result.video || [];
-      formats.audio = result.audio || [];
-      renderFormatGrid();
-    } catch(e) {}
   }
 
   async function startDownload(url, btn) {

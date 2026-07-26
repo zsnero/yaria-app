@@ -289,27 +289,112 @@ func (d *DownloadService) getThumbnailURL(url string) string {
 	return ""
 }
 
+// FetchInfo gets metadata and formats in a single yt-dlp call.
+// Preferred over FetchMetadata + ListFormats (avoids double network round-trip).
+func (d *DownloadService) FetchInfo(rawURL string) map[string]interface{} {
+	url := cleanURL(rawURL)
+	if d.dl == nil {
+		// Still try OEmbed metadata so UI is not empty
+		if fb := d.fetchMetadataFallback(url); fb != nil {
+			fb["video"] = []map[string]interface{}{}
+			fb["audio"] = []map[string]interface{}{}
+			return fb
+		}
+		return map[string]interface{}{"error": "downloader not initialized"}
+	}
+
+	type infoResult struct {
+		info *downloader.VideoInfo
+		err  error
+	}
+	ch := make(chan infoResult, 1)
+	go func() {
+		info, err := d.dl.GetVideoInfo(url)
+		ch <- infoResult{info, err}
+	}()
+
+	select {
+	case res := <-ch:
+		if res.err == nil && res.info != nil && res.info.Title != "" {
+			result := map[string]interface{}{
+				"title": res.info.Title,
+			}
+			if res.info.Uploader != "" {
+				result["uploader"] = res.info.Uploader
+			}
+			if res.info.Duration > 0 {
+				result["duration"] = res.info.Duration
+			}
+			thumb := res.info.Thumbnail
+			if thumb == "" {
+				thumb = d.getThumbnailURL(url)
+			}
+			if thumb != "" {
+				result["thumbnail"] = thumb
+			}
+			videoFmts, audioFmts := splitFormats(res.info.Formats)
+			result["video"] = videoFmts
+			result["audio"] = audioFmts
+			return result
+		}
+	case <-time.After(50 * time.Second):
+		// hung — fall through
+	}
+
+	// Fallback: OEmbed metadata only (no formats)
+	if fb := d.fetchMetadataFallback(url); fb != nil {
+		fb["video"] = []map[string]interface{}{}
+		fb["audio"] = []map[string]interface{}{}
+		return fb
+	}
+	thumb := d.getThumbnailURL(url)
+	r := map[string]interface{}{
+		"title": url,
+		"video": []map[string]interface{}{},
+		"audio": []map[string]interface{}{},
+	}
+	if thumb != "" {
+		r["thumbnail"] = thumb
+	}
+	return r
+}
+
 // ListFormats lists available video formats/resolutions for a URL.
 // Returns {video: [...], audio: [...]} separated by type.
+// Prefer FetchInfo when metadata is also needed.
 func (d *DownloadService) ListFormats(rawURL string) map[string]interface{} {
 	if d.dl == nil {
 		return map[string]interface{}{"error": "downloader not initialized"}
 	}
 	url := cleanURL(rawURL)
+
+	// Prefer single JSON dump (same path as FetchInfo) for reliability
+	if info, err := d.dl.GetVideoInfo(url); err == nil && info != nil {
+		videoFmts, audioFmts := splitFormats(info.Formats)
+		return map[string]interface{}{
+			"video": videoFmts,
+			"audio": audioFmts,
+		}
+	}
+
 	formats, err := d.dl.GetFormats(url)
 	if err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	videoFmts, audioFmts := splitFormats(formats)
+	return map[string]interface{}{
+		"video": videoFmts,
+		"audio": audioFmts,
+	}
+}
 
-	var videoFmts, audioFmts []map[string]interface{}
+func splitFormats(formats []downloader.Format) (videoFmts, audioFmts []map[string]interface{}) {
 	for _, f := range formats {
-		// Clean up extension -- sometimes yt-dlp puts codec IDs like "MP4A.40.2"
 		ext := f.Ext
 		extLower := strings.ToLower(ext)
 		if strings.Contains(extLower, ".") && !strings.HasPrefix(extLower, "mp4") && !strings.HasPrefix(extLower, "webm") {
-			ext = "" // codec identifier, not a file extension
+			ext = ""
 		}
-		// Simplify known extensions
 		if strings.HasPrefix(extLower, "mp4") {
 			ext = "MP4"
 		} else if strings.HasPrefix(extLower, "webm") {
@@ -334,11 +419,7 @@ func (d *DownloadService) ListFormats(rawURL string) map[string]interface{} {
 			videoFmts = append(videoFmts, m)
 		}
 	}
-
-	return map[string]interface{}{
-		"video": videoFmts,
-		"audio": audioFmts,
-	}
+	return videoFmts, audioFmts
 }
 
 // StartDownload begins a download in a goroutine and emits progress events.
@@ -712,7 +793,9 @@ func (d *DownloadService) DeleteDownloadFiles(id string) map[string]interface{} 
 	return d.RemoveDownload(id)
 }
 
-// PlayDownloadedFile opens the downloaded file with the system player.
+// PlayDownloadedFile resolves the downloaded file path for in-app or external play.
+// Prefer returning path so the frontend can open the in-app player; falls back to
+// launching an external player only when explicitly needed.
 func (d *DownloadService) PlayDownloadedFile(id string) map[string]interface{} {
 	var filePath string
 	d.mu.Lock()
@@ -727,18 +810,62 @@ func (d *DownloadService) PlayDownloadedFile(id string) map[string]interface{} {
 		}
 	}
 
+	// Recover path by scanning default download dir if missing
+	if filePath == "" {
+		d.mu.Lock()
+		loc := ""
+		if d.cfg != nil {
+			loc = d.cfg.DownloadLocation
+		}
+		d.mu.Unlock()
+		if loc != "" {
+			if found := findVideoInDir(expandTilde(loc)); found != "" {
+				filePath = found
+			}
+		}
+	}
+
 	if filePath == "" {
 		return map[string]interface{}{"error": "file path not found"}
 	}
 	if _, err := os.Stat(filePath); err != nil {
-		return map[string]interface{}{"error": "file not found on disk"}
+		// Path stale — try parent dir scan
+		if found := findVideoInDir(filepath.Dir(filePath)); found != "" {
+			filePath = found
+		} else {
+			return map[string]interface{}{"error": "file not found on disk"}
+		}
 	}
 
-	player, err := openMediaFile(filePath)
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
+	// Return path for in-app player (frontend navigates to #/play?file=...)
+	return map[string]interface{}{
+		"status": "ok",
+		"file":   filePath,
+		"path":   filePath,
+		"title":  filepath.Base(filePath),
 	}
-	return map[string]interface{}{"status": "playing", "player": player}
+}
+
+// findVideoInDir walks dir for the largest playable video file.
+func findVideoInDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	var best string
+	var bestSize int64
+	videoExts := map[string]bool{".mp4": true, ".mkv": true, ".webm": true, ".avi": true, ".mov": true, ".m4v": true}
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if videoExts[ext] && !strings.HasSuffix(info.Name(), ".part") && info.Size() > bestSize {
+			bestSize = info.Size()
+			best = path
+		}
+		return nil
+	})
+	return best
 }
 
 // SetDownloadDir sets the default download directory.
