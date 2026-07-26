@@ -69,11 +69,22 @@ type DownloadService struct {
 // NewDownloadService creates a DownloadService with default config.
 func NewDownloadService() *DownloadService {
 	store, _ := NewDownloadStore() // non-fatal if store fails
+	nextID := 0
+	if store != nil {
+		// Continue IDs past existing history so we never overwrite dl_1, etc.
+		for _, r := range store.GetAll() {
+			var n int
+			if _, err := fmt.Sscanf(r.ID, "dl_%d", &n); err == nil && n > nextID {
+				nextID = n
+			}
+		}
+	}
 	return &DownloadService{
 		downloads:  make(map[string]*activeDownload),
 		cfg:        config.New(),
 		store:      store,
 		maxRunning: 3,
+		nextID:     nextID,
 	}
 }
 
@@ -593,22 +604,15 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		}
 	}
 
-	// Find the downloaded file
+	// Find THIS download's file (newest matching title folder / mtime — never first walk hit)
 	d.mu.Lock()
 	if ad != nil {
-		// Walk dest for the most recently modified video file
-		filepath.Walk(dest, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
-				return nil
-			}
-			ext := strings.ToLower(filepath.Ext(path))
-			isVideo := ext == ".mp4" || ext == ".mkv" || ext == ".webm" || ext == ".avi" || ext == ".mov"
-			if isVideo && !strings.HasSuffix(info.Name(), ".part") && !strings.HasPrefix(info.Name(), ".") {
-				ad.FilePath = path
-				return filepath.SkipAll
-			}
-			return nil
-		})
+		title := ad.Title
+		started := time.Time{}
+		if t, err := time.ParseInLocation("2006-01-02 15:04", ad.StartedAt, time.Local); err == nil {
+			started = t.Add(-2 * time.Minute) // small slack for clock skew
+		}
+		ad.FilePath = findDownloadVideo(dest, title, started)
 	}
 	d.mu.Unlock()
 
@@ -793,79 +797,252 @@ func (d *DownloadService) DeleteDownloadFiles(id string) map[string]interface{} 
 	return d.RemoveDownload(id)
 }
 
-// PlayDownloadedFile resolves the downloaded file path for in-app or external play.
-// Prefer returning path so the frontend can open the in-app player; falls back to
-// launching an external player only when explicitly needed.
+// PlayDownloadedFile resolves the downloaded file path for in-app play.
+// Never scans a shared download root for "largest file" — that picks the wrong video.
 func (d *DownloadService) PlayDownloadedFile(id string) map[string]interface{} {
-	var filePath string
+	var filePath, title, downloadDir string
 	d.mu.Lock()
 	if ad, ok := d.downloads[id]; ok {
 		filePath = ad.FilePath
+		title = ad.Title
+		downloadDir = ad.DownloadDir
 	}
 	d.mu.Unlock()
 
-	if filePath == "" && d.store != nil {
+	if d.store != nil {
 		if r, err := d.store.Get(id); err == nil {
-			filePath = r.FilePath
-		}
-	}
-
-	// Recover path by scanning default download dir if missing
-	if filePath == "" {
-		d.mu.Lock()
-		loc := ""
-		if d.cfg != nil {
-			loc = d.cfg.DownloadLocation
-		}
-		d.mu.Unlock()
-		if loc != "" {
-			if found := findVideoInDir(expandTilde(loc)); found != "" {
-				filePath = found
+			if filePath == "" {
+				filePath = r.FilePath
+			}
+			if title == "" {
+				title = r.Title
 			}
 		}
 	}
 
-	if filePath == "" {
-		return map[string]interface{}{"error": "file path not found"}
-	}
-	if _, err := os.Stat(filePath); err != nil {
-		// Path stale — try parent dir scan
-		if found := findVideoInDir(filepath.Dir(filePath)); found != "" {
-			filePath = found
-		} else {
-			return map[string]interface{}{"error": "file not found on disk"}
+	// Stored path valid?
+	if filePath != "" {
+		if st, err := os.Stat(filePath); err == nil && !st.IsDir() {
+			return map[string]interface{}{
+				"status": "ok",
+				"file":   filePath,
+				"path":   filePath,
+				"title":  filepath.Base(filePath),
+			}
+		}
+		// Stale file path — search only its parent title folder, not the shared root
+		parent := filepath.Dir(filePath)
+		if found := findDownloadVideo(parent, title, time.Time{}); found != "" {
+			return map[string]interface{}{
+				"status": "ok",
+				"file":   found,
+				"path":   found,
+				"title":  filepath.Base(found),
+			}
 		}
 	}
 
-	// Return path for in-app player (frontend navigates to #/play?file=...)
-	return map[string]interface{}{
-		"status": "ok",
-		"file":   filePath,
-		"path":   filePath,
-		"title":  filepath.Base(filePath),
+	// Resolve via title under download dir (title subfolder only)
+	dirs := []string{}
+	if downloadDir != "" {
+		dirs = append(dirs, expandTilde(downloadDir))
 	}
+	d.mu.Lock()
+	if d.cfg != nil && d.cfg.DownloadLocation != "" {
+		dirs = append(dirs, expandTilde(d.cfg.DownloadLocation))
+	}
+	d.mu.Unlock()
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, "Downloads", "Mantorex"))
+	}
+
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if found := findDownloadVideo(dir, title, time.Time{}); found != "" {
+			// Persist corrected path
+			if d.store != nil {
+				if r, err := d.store.Get(id); err == nil {
+					r.FilePath = found
+					if info, err := os.Stat(found); err == nil {
+						r.FileSize = info.Size()
+					}
+					_ = d.store.Save(*r)
+				}
+			}
+			d.mu.Lock()
+			if ad, ok := d.downloads[id]; ok {
+				ad.FilePath = found
+			}
+			d.mu.Unlock()
+			return map[string]interface{}{
+				"status": "ok",
+				"file":   found,
+				"path":   found,
+				"title":  filepath.Base(found),
+			}
+		}
+	}
+
+	return map[string]interface{}{"error": "file path not found"}
 }
 
-// findVideoInDir walks dir for the largest playable video file.
-func findVideoInDir(dir string) string {
-	if dir == "" {
+var downloadVideoExts = map[string]bool{
+	".mp4": true, ".mkv": true, ".webm": true, ".avi": true, ".mov": true, ".m4v": true, ".ts": true,
+}
+
+// findDownloadVideo locates the video for one download inside dest.
+// Prefer a title-matching subfolder; never return an unrelated sibling download.
+func findDownloadVideo(dest, title string, notBefore time.Time) string {
+	if dest == "" {
 		return ""
 	}
+	dest = expandTilde(dest)
+	if st, err := os.Stat(dest); err != nil {
+		return ""
+	} else if !st.IsDir() {
+		// dest is already a file
+		ext := strings.ToLower(filepath.Ext(dest))
+		if downloadVideoExts[ext] {
+			return dest
+		}
+		return ""
+	}
+
+	normTitle := normalizeTitleKey(title)
+
+	// 1) Exact / fuzzy match title subfolder
+	if normTitle != "" {
+		entries, _ := os.ReadDir(dest)
+		var matchedDirs []string
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			if titleKeysMatch(normTitle, normalizeTitleKey(name)) {
+				matchedDirs = append(matchedDirs, filepath.Join(dest, name))
+			}
+		}
+		// Newest video among matched title folders
+		var best string
+		var bestTime time.Time
+		for _, dir := range matchedDirs {
+			if f, t := newestVideoIn(dir, notBefore); f != "" && (best == "" || t.After(bestTime)) {
+				best, bestTime = f, t
+			}
+		}
+		if best != "" {
+			return best
+		}
+	}
+
+	// 2) If dest itself looks like a title folder (contains videos only for one item)
+	if f, _ := newestVideoIn(dest, notBefore); f != "" {
+		// Only accept if file is directly in dest or one level down matching title
+		rel, err := filepath.Rel(dest, f)
+		if err == nil {
+			parts := strings.Split(rel, string(filepath.Separator))
+			if len(parts) == 1 {
+				// loose file in dest — only OK when notBefore filters to this download
+				if !notBefore.IsZero() {
+					return f
+				}
+			} else if len(parts) >= 2 && normTitle != "" && titleKeysMatch(normTitle, normalizeTitleKey(parts[0])) {
+				return f
+			} else if len(parts) >= 2 && !notBefore.IsZero() {
+				// recent file in some subfolder after download started
+				return f
+			}
+		}
+	}
+
+	// 3) Newest video under dest modified after notBefore (this session only)
+	if !notBefore.IsZero() {
+		if f, _ := newestVideoIn(dest, notBefore); f != "" {
+			return f
+		}
+	}
+
+	return ""
+}
+
+func newestVideoIn(dir string, notBefore time.Time) (string, time.Time) {
 	var best string
-	var bestSize int64
-	videoExts := map[string]bool{".mp4": true, ".mkv": true, ".webm": true, ".avi": true, ".mov": true, ".m4v": true}
+	var bestTime time.Time
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(path))
-		if videoExts[ext] && !strings.HasSuffix(info.Name(), ".part") && info.Size() > bestSize {
-			bestSize = info.Size()
-			best = path
+		name := info.Name()
+		if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".part") {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		if !downloadVideoExts[ext] {
+			return nil
+		}
+		mt := info.ModTime()
+		if !notBefore.IsZero() && mt.Before(notBefore) {
+			return nil
+		}
+		if best == "" || mt.After(bestTime) || (mt.Equal(bestTime) && info.Size() > 0 && path > best) {
+			// prefer newer; on tie prefer larger via secondary walk compare
+			if best == "" || mt.After(bestTime) {
+				best, bestTime = path, mt
+			} else if mt.Equal(bestTime) {
+				if prev, err := os.Stat(best); err == nil && info.Size() > prev.Size() {
+					best, bestTime = path, mt
+				}
+			}
 		}
 		return nil
 	})
-	return best
+	return best, bestTime
+}
+
+func normalizeTitleKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	// Keep letters/digits only so punctuation differences (： vs :, ｜ vs |) match
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func titleKeysMatch(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	// Prefix / contains for truncated sanitization
+	if strings.HasPrefix(a, b) || strings.HasPrefix(b, a) {
+		return true
+	}
+	if len(a) >= 12 && len(b) >= 12 {
+		// Compare first 24 chars of normalized form
+		n := 24
+		if len(a) < n {
+			n = len(a)
+		}
+		if len(b) < n {
+			n = len(b)
+		}
+		return a[:n] == b[:n]
+	}
+	return false
 }
 
 // SetDownloadDir sets the default download directory.

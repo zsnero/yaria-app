@@ -175,29 +175,16 @@
 
   async function playDownload(dl: DownloadItem) {
     try {
-      let path = dl.file_path || '';
-      if (!path) {
-        const res = await api.downloads.playDownloadedFile(dl.id);
-        if (res?.error) {
-          confirmMessage = res.error;
-          confirmAction = () => { confirmMessage = ''; confirmAction = null; };
-          return;
-        }
-        path = res?.file || res?.path || '';
-      }
-      if (!path && dl.download_dir) {
-        const pf = await api.player.playFile(dl.download_dir);
-        path = pf?.file || '';
-      }
-      if (!path) {
-        confirmMessage = 'File path not found';
+      // Always resolve via backend by download id (title-matched folder).
+      // Never playFile(download_dir) — shared roots pick the wrong sibling video.
+      const res = await api.downloads.playDownloadedFile(dl.id);
+      if (res?.error || !(res?.file || res?.path)) {
+        confirmMessage = res?.error || 'File path not found';
         confirmAction = () => { confirmMessage = ''; confirmAction = null; };
         return;
       }
-      // Resolve dirs → video file, then open in-app player
-      const pf = await api.player.playFile(path);
-      const file = pf?.file || path;
-      navigate(`#/play?file=${encodeURIComponent(file)}&title=${encodeURIComponent(dl.title || pf?.title || 'Download')}`);
+      const file = res.file || res.path;
+      navigate(`#/play?file=${encodeURIComponent(file)}&title=${encodeURIComponent(dl.title || res.title || 'Download')}`);
     } catch (e: any) {
       confirmMessage = e?.message || 'Failed to play';
       confirmAction = () => { confirmMessage = ''; confirmAction = null; };
