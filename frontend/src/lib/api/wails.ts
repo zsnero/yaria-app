@@ -80,6 +80,7 @@ export const settings = {
     blur_set?: boolean;
     configured?: boolean;
     player_backend?: string;
+    mantorex_legal_accepted?: boolean;
   }> => call(() => wails().SettingsService.GetUISettings()),
   saveUISettings: (settings: {
     font?: string;
@@ -88,6 +89,7 @@ export const settings = {
     animations?: boolean;
     blur?: boolean;
     player_backend?: string;
+    mantorex_legal_accepted?: boolean;
   }): Promise<any> => call(() => wails().SettingsService.SaveUISettings(settings)),
 };
 
@@ -170,6 +172,10 @@ export const deps = {
     call(() => wails().DepsService.CheckDeps()),
   installFFmpeg: (): Promise<any> =>
     call(() => wails().DepsService.InstallFFmpeg()),
+  installMpv: (): Promise<any> =>
+    call(() => wails().DepsService.InstallMpv()),
+  ensureAll: (): Promise<any> =>
+    call(() => wails().DepsService.EnsureAllDeps()),
   ffmpegPath: (): Promise<string> =>
     call(() => wails().DepsService.FFmpegPath()),
   listDirectories: (path: string): Promise<{ name: string; path: string }[]> =>

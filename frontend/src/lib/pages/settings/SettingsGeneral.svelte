@@ -172,15 +172,36 @@
   }
 
   async function setPlayerBackend(backend: 'webview' | 'libmpv') {
-    if (backend === 'libmpv' && !mpvAvailable) return;
-    playerBackend = backend;
     playerBackendSaving = true;
     playerBackendMsg = '';
     try {
+      if (backend === 'libmpv' && !mpvAvailable) {
+        playerBackendMsg = 'Downloading native player…';
+        await api.deps.installMpv();
+        // Re-check after a short wait (download runs async)
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const av = await api.mpv.available().catch(() => ({ available: false }));
+          if (av?.available) {
+            mpvAvailable = true;
+            break;
+          }
+        }
+        if (!mpvAvailable) {
+          playerBackendMsg = 'Could not install libmpv automatically. Install mpv via your package manager, then retry.';
+          toastError(playerBackendMsg);
+          playerBackendSaving = false;
+          return;
+        }
+        playerBackendMsg = 'Native player installed. Restart the app if playback fails to load libmpv.';
+      }
+      playerBackend = backend;
       await api.settings.saveUISettings({ player_backend: backend });
-      playerBackendMsg = backend === 'libmpv'
-        ? 'Native player selected. Applies on next playback.'
-        : 'WebView player selected. Applies on next playback.';
+      if (backend === 'libmpv') {
+        playerBackendMsg = playerBackendMsg || 'Native player selected. Applies on next playback.';
+      } else {
+        playerBackendMsg = 'WebView player selected. Applies on next playback.';
+      }
       toastSuccess('Settings saved');
     } catch (e: any) {
       playerBackendMsg = e?.message || 'Failed to save';
@@ -625,15 +646,15 @@
         class:btn-primary={playerBackend === 'libmpv'}
         class:btn-ghost={playerBackend !== 'libmpv'}
         onclick={() => setPlayerBackend('libmpv')}
-        disabled={playerBackendSaving || !mpvAvailable}
-        title={mpvAvailable ? 'Use embedded libmpv' : (mpvReason || 'libmpv not available')}
+        disabled={playerBackendSaving}
+        title={mpvAvailable ? 'Use embedded libmpv' : 'Will download libmpv if missing'}
       >
         Native (libmpv)
       </button>
     </div>
     {#if !mpvAvailable}
       <div class="text-muted player-backend-hint">
-        {mpvReason || 'Native player unavailable on this system. Install libmpv / mpv and use X11.'}
+        {mpvReason || 'libmpv not found yet — choosing Native will try to download it automatically.'}
       </div>
     {/if}
     {#if playerBackendMsg}

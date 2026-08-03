@@ -113,17 +113,19 @@
   async function initDeps() {
     depsReady = false;
     depsError = '';
-    depsMessage = 'Preparing download tools...';
+    depsMessage = 'Preparing download tools…';
 
-    // Always call DownloadService.InitDeps() to create the yt-dlp wrapper (d.dl).
-    // DepsService.CheckDeps() only checks if binaries exist on disk —
-    // it does NOT initialize the internal downloader needed for StartDownload/FetchMetadata.
-    // InitDeps() returns immediately; the goroutine finishes fast when binaries exist.
-    // Set depsReady immediately (like old JS); startDownload has error handling if d.dl isn't ready yet.
+    // InitDeps returns immediately; wait for deps-ready / deps-error events for real status.
+    // (App.svelte also runs EnsureAllDeps for FFmpeg/libmpv with a global banner.)
     try {
       await api.downloads.initDeps();
-      depsReady = true;
-      depsMessage = '';
+      // If tools already on disk, ready fires quickly; allow download UI after short grace
+      setTimeout(() => {
+        if (!depsError) {
+          depsReady = true;
+          if (depsMessage === 'Preparing download tools…') depsMessage = '';
+        }
+      }, 400);
     } catch (err: any) {
       depsError = err?.message || 'Failed to initialize';
     }

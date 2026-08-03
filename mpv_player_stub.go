@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package main
 
@@ -8,7 +8,7 @@ import (
 )
 
 func mpvPlatformAvailable() (bool, string) {
-	return false, "Native libmpv player is only available on Linux in this build"
+	return false, "Native player is available on Linux and Windows only in this build"
 }
 
 func mpvPlatformStart(ctx context.Context) error {

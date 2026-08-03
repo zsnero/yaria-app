@@ -5,6 +5,7 @@
   import Navbar from './lib/components/Navbar.svelte';
   import Starfield from './lib/components/Starfield.svelte';
   import ProGate from './lib/components/ProGate.svelte';
+  import MantorexLegal from './lib/components/MantorexLegal.svelte';
   import Toast from './lib/components/Toast.svelte';
   import { saveScrollPosition, restoreScrollPosition } from './lib/stores/scroll';
 
@@ -34,6 +35,12 @@
   let showModeSwitcher = $derived(!isPlayerRoute && mantorexRoutes.some(r => route.startsWith(r)) && !!ModeSwitcher);
   let isProRoute = $derived(mantorexRoutes.some(r => route.startsWith(r)));
   let needsProGate = $derived(isProRoute && proCheckDone && !proStatus);
+  // Legal notice only for Torrents (not Local / Remote / Library)
+  const torrentLegalRoutes = ['/mantorex', '/home', '/search', '/detail', '/torrent-downloads'];
+  let isTorrentLegalRoute = $derived(torrentLegalRoutes.some(r => route.startsWith(r)));
+  let needsMantorexLegal = $derived(
+    isTorrentLegalRoute && proCheckDone && proStatus && mantorexLegalChecked && !mantorexLegalAccepted
+  );
 
   let playerMounted = $state(false);
   let playerProps = $state<{
@@ -119,10 +126,45 @@
   function onProActivated() {
     proStatus = true;
     isPro.set(true);
+    // Fresh trial/key → show legal notice if not yet accepted
+    loadMantorexLegal();
+  }
+
+  function onMantorexLegalAccepted() {
+    mantorexLegalAccepted = true;
+  }
+
+  async function loadMantorexLegal() {
+    try {
+      if (localStorage.getItem('yaria_mantorex_legal_v1') === '1') {
+        mantorexLegalAccepted = true;
+        return;
+      }
+    } catch { /* ignore */ }
+    try {
+      const ui = await api.settings.getUISettings();
+      mantorexLegalAccepted = !!ui?.mantorex_legal_accepted;
+      if (mantorexLegalAccepted) {
+        try { localStorage.setItem('yaria_mantorex_legal_v1', '1'); } catch { /* ignore */ }
+      }
+    } catch {
+      mantorexLegalAccepted = false;
+    }
   }
 
   let proStatus = $state(false);
   let proCheckDone = $state(false);
+  let mantorexLegalAccepted = $state(false);
+  let mantorexLegalChecked = $state(false);
+
+  // First-run / background dependency install progress
+  let setupVisible = $state(false);
+  let setupMessage = $state('');
+  let setupPercent = $state(0);
+  let setupName = $state('');
+  let setupDone = $state(false);
+  let setupError = $state('');
+  let setupCleanups: (() => void)[] = [];
 
   onMount(async () => {
     handleHashChange();
@@ -141,8 +183,71 @@
     }
     proCheckDone = true;
     proChecked.set(true);
+    await loadMantorexLegal();
+    mantorexLegalChecked = true;
 
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    // Only show banner when something is actually installing (not on every launch)
+    setupCleanups.push(api.events.on('setup-progress', (data: any) => {
+      if (!data) return;
+      // Ignore silent no-op completions
+      if (data.done && !setupVisible) return;
+      if (data.phase === 'start' || data.phase === 'install') {
+        setupVisible = true;
+      }
+      if (!setupVisible && !data.done) setupVisible = true;
+      setupMessage = data.message || '';
+      setupPercent = Number(data.percent) || 0;
+      setupName = data.name || '';
+      setupDone = !!data.done;
+      setupError = data.error || '';
+      if (data.done && setupVisible) {
+        setTimeout(() => { setupVisible = false; }, 2200);
+      }
+    }));
+    setupCleanups.push(api.events.on('deps-install-progress', (data: any) => {
+      if (!data) return;
+      // Only surface real download/extract activity
+      const st = data.status || '';
+      if (st === 'complete' && !setupVisible) return;
+      if (st === 'downloading' || st === 'extracting' || st === 'error') {
+        setupVisible = true;
+      }
+      if (!setupVisible) return;
+      setupName = data.name || setupName;
+      setupMessage = data.message || setupMessage;
+      if (data.percent != null) setupPercent = Number(data.percent) || setupPercent;
+      if (st === 'error') setupError = data.message || 'Install failed';
+      if (st === 'complete') {
+        setupMessage = data.message || 'Installed';
+        setupPercent = 100;
+        setTimeout(() => { setupVisible = false; }, 2200);
+      }
+    }));
+    // yt-dlp first-time lines only (ignore if nothing is installing)
+    setupCleanups.push(api.events.on('deps-progress', (data: any) => {
+      if (!data?.message || setupDone) return;
+      const msg = String(data.message).toLowerCase();
+      // Only show when actually downloading/installing tools
+      if (!msg.includes('download') && !msg.includes('install') && !msg.includes('extract') && !msg.includes('fetch')) {
+        return;
+      }
+      setupVisible = true;
+      setupName = 'yt-dlp';
+      setupMessage = data.message;
+    }));
+
+    try {
+      await api.deps.ensureAll();
+    } catch { /* optional */ }
+    try {
+      await api.downloads.initDeps();
+    } catch { /* optional */ }
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      setupCleanups.forEach((fn) => fn());
+      setupCleanups = [];
+    };
   });
 </script>
 
@@ -150,6 +255,43 @@
 
 {#if !isPlayerRoute}
   <Navbar />
+{/if}
+
+{#if setupVisible && !isPlayerRoute}
+  <div class="setup-banner" class:done={setupDone} class:error={!!setupError}>
+    <div class="setup-banner-inner">
+      {#if !setupDone && !setupError}
+        <div class="setup-spinner"></div>
+      {/if}
+      <div class="setup-text">
+        <div class="setup-title">
+          {#if setupError}
+            Setup issue
+          {:else if setupDone}
+            Ready
+          {:else}
+            Setting up Yaria…
+          {/if}
+        </div>
+        <div class="setup-msg">
+          {#if setupError}
+            {setupError}
+          {:else if setupName}
+            {setupName}: {setupMessage}
+          {:else}
+            {setupMessage || 'Preparing dependencies…'}
+          {/if}
+        </div>
+      </div>
+      {#if !setupDone}
+        <div class="setup-pct">{setupPercent}%</div>
+      {/if}
+      <button type="button" class="setup-dismiss" onclick={() => { setupVisible = false; }}>×</button>
+    </div>
+    {#if !setupDone && !setupError}
+      <div class="setup-bar"><div class="setup-bar-fill" style="width:{setupPercent}%"></div></div>
+    {/if}
+  </div>
 {/if}
 
 {#if playerMounted && Player}
@@ -182,6 +324,8 @@
     {:else if route === '/mantorex' || route === '/mantorex/' || route === '/home'}
       {#if needsProGate}
         <ProGate onActivated={onProActivated} />
+      {:else if needsMantorexLegal}
+        <MantorexLegal onAccepted={onMantorexLegalAccepted} />
       {:else if MantorexHome}
         <MantorexHome />
       {:else}
@@ -190,12 +334,16 @@
     {:else if route === '/search'}
       {#if needsProGate}
         <ProGate onActivated={onProActivated} />
+      {:else if needsMantorexLegal}
+        <MantorexLegal onAccepted={onMantorexLegalAccepted} />
       {:else if SearchResults}
         <SearchResults query={params.get('q') || ''} />
       {/if}
     {:else if route === '/detail'}
       {#if needsProGate}
         <ProGate onActivated={onProActivated} />
+      {:else if needsMantorexLegal}
+        <MantorexLegal onAccepted={onMantorexLegalAccepted} />
       {:else if Detail}
         <Detail
           title={params.get('title') || ''}
@@ -227,6 +375,8 @@
     {:else if route === '/torrent-downloads'}
       {#if needsProGate}
         <ProGate onActivated={onProActivated} />
+      {:else if needsMantorexLegal}
+        <MantorexLegal onAccepted={onMantorexLegalAccepted} />
       {:else if TorrentDownloads}
         <TorrentDownloads />
       {/if}
@@ -276,5 +426,103 @@
 
   .dim {
     color: $text-dim;
+  }
+
+  .setup-banner {
+    position: fixed;
+    top: calc(#{$nav-h} + 12px);
+    right: 16px;
+    z-index: 200;
+    width: min(380px, calc(100vw - 32px));
+    background: rgba(12, 12, 24, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(16px);
+    overflow: hidden;
+    animation: setupIn 0.25s ease;
+
+    &.done {
+      border-color: rgba(52, 211, 153, 0.35);
+    }
+    &.error {
+      border-color: rgba(248, 113, 113, 0.4);
+    }
+  }
+
+  .setup-banner-inner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px 10px;
+  }
+
+  .setup-spinner {
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-top-color: $accent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .setup-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .setup-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: $text;
+  }
+
+  .setup-msg {
+    font-size: 12px;
+    color: $text-muted;
+    margin-top: 2px;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+
+  .setup-pct {
+    font-size: 11px;
+    color: $text-dim;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  .setup-dismiss {
+    background: none;
+    border: none;
+    color: $text-muted;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+    flex-shrink: 0;
+    &:hover { color: $text; }
+  }
+
+  .setup-bar {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .setup-bar-fill {
+    height: 100%;
+    background: $accent;
+    transition: width 0.25s ease;
+  }
+
+  @keyframes setupIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>

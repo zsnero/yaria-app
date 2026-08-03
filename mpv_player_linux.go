@@ -121,15 +121,22 @@ var (
 )
 
 func mpvPlatformAvailable() (bool, string) {
-	// Need libmpv (linked) and a display; also accept system mpv binary as health signal
-	if _, err := exec.LookPath("mpv"); err != nil {
-		// libmpv may still work without the CLI
-	}
 	dpy := C.XOpenDisplay(nil)
 	if dpy == nil {
-		return false, "No X11 display (libmpv embed needs X11)"
+		return false, "No X11 display (libmpv embed needs X11 / XWayland)"
 	}
 	C.XCloseDisplay(dpy)
+
+	// System or bundled libmpv/mpv (auto-downloaded into dependencies/)
+	if deps := NewDepsService(); deps != nil {
+		if p, ok := deps.MpvLibOrBinary(); ok {
+			return true, "using " + p
+		}
+	}
+	if _, err := exec.LookPath("mpv"); err == nil {
+		return true, ""
+	}
+	// CGO is linked against libmpv — if we got this far the DSO loaded at process start
 	return true, ""
 }
 
