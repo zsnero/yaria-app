@@ -79,6 +79,7 @@ export const settings = {
     blur: boolean;
     blur_set?: boolean;
     configured?: boolean;
+    player_backend?: string;
   }> => call(() => wails().SettingsService.GetUISettings()),
   saveUISettings: (settings: {
     font?: string;
@@ -86,7 +87,42 @@ export const settings = {
     scale?: string;
     animations?: boolean;
     blur?: boolean;
+    player_backend?: string;
   }): Promise<any> => call(() => wails().SettingsService.SaveUISettings(settings)),
+};
+
+// === Native libmpv player ===
+export const mpv = {
+  available: (): Promise<{ available: boolean; reason?: string; backend?: string }> =>
+    call(() => wails().MpvService.Available()),
+  getBackend: (): Promise<string> =>
+    call(() => wails().MpvService.GetBackend()),
+  start: (): Promise<any> =>
+    call(() => wails().MpvService.Start()),
+  loadFile: (pathOrURL: string): Promise<any> =>
+    call(() => wails().MpvService.LoadFile(pathOrURL)),
+  setBounds: (x: number, y: number, w: number, h: number): Promise<any> =>
+    call(() => wails().MpvService.SetBounds(x, y, w, h)),
+  setVisible: (visible: boolean): Promise<any> =>
+    call(() => wails().MpvService.SetVisible(visible)),
+  play: (): Promise<any> =>
+    call(() => wails().MpvService.Play()),
+  pause: (): Promise<any> =>
+    call(() => wails().MpvService.Pause()),
+  togglePause: (): Promise<any> =>
+    call(() => wails().MpvService.TogglePause()),
+  seek: (seconds: number): Promise<any> =>
+    call(() => wails().MpvService.Seek(seconds)),
+  setVolume: (vol: number): Promise<any> =>
+    call(() => wails().MpvService.SetVolume(vol)),
+  getTime: (): Promise<number> =>
+    call(() => wails().MpvService.GetTime()),
+  getDuration: (): Promise<number> =>
+    call(() => wails().MpvService.GetDuration()),
+  isPaused: (): Promise<boolean> =>
+    call(() => wails().MpvService.IsPaused()),
+  stop: (): Promise<any> =>
+    call(() => wails().MpvService.Stop()),
 };
 
 // === Downloads (Yaria) ===
@@ -262,7 +298,7 @@ export const media = {
     call(() => wails().MediaService.GetLocalPageData()),
   getDetails: (id: string): Promise<LocalMedia | null> =>
     call(() => wails().MediaService.GetMediaDetails(id)),
-  play: (id: string): Promise<{ stream_url: string; title: string; duration: number; season?: number; episode?: number; type?: string }> =>
+  play: (id: string): Promise<{ stream_url: string; file_path?: string; title: string; duration: number; season?: number; episode?: number; type?: string }> =>
     call(() => wails().MediaService.PlayMedia(id)),
   getNextEpisode: (id: string): Promise<{ id?: string; title?: string; poster?: string; season?: number; episode?: number; show?: string }> =>
     call(() => wails().MediaService.GetNextEpisode(id)),
@@ -409,6 +445,7 @@ export const api = {
   mediaServer,
   dlna,
   player,
+  mpv,
 };
 
 export default api;

@@ -44,6 +44,13 @@
       : !navigator.platform.includes('Linux')
   );
 
+  // Video player backend (applies to local / torrents / remote)
+  let playerBackend = $state<'webview' | 'libmpv'>('webview');
+  let mpvAvailable = $state(false);
+  let mpvReason = $state('');
+  let playerBackendSaving = $state(false);
+  let playerBackendMsg = $state('');
+
   // Font options
   const fontOptions = [
     { value: 'Roboto', label: 'Roboto (Default)' },
@@ -147,6 +154,39 @@
 
   function handleBlurChange() {
     saveUISettings({ blur: uiBlur });
+  }
+
+  async function loadPlayerBackend() {
+    try {
+      const [ui, av] = await Promise.all([
+        api.settings.getUISettings(),
+        api.mpv.available().catch(() => ({ available: false, reason: 'MpvService unavailable' })),
+      ]);
+      playerBackend = ui.player_backend === 'libmpv' ? 'libmpv' : 'webview';
+      mpvAvailable = !!av?.available;
+      mpvReason = (av as any)?.reason || '';
+    } catch {
+      playerBackend = 'webview';
+      mpvAvailable = false;
+    }
+  }
+
+  async function setPlayerBackend(backend: 'webview' | 'libmpv') {
+    if (backend === 'libmpv' && !mpvAvailable) return;
+    playerBackend = backend;
+    playerBackendSaving = true;
+    playerBackendMsg = '';
+    try {
+      await api.settings.saveUISettings({ player_backend: backend });
+      playerBackendMsg = backend === 'libmpv'
+        ? 'Native player selected. Applies on next playback.'
+        : 'WebView player selected. Applies on next playback.';
+      toastSuccess('Settings saved');
+    } catch (e: any) {
+      playerBackendMsg = e?.message || 'Failed to save';
+      toastError(playerBackendMsg);
+    }
+    playerBackendSaving = false;
   }
 
   function resetUIDefaults() {
@@ -389,6 +429,8 @@
       if (proxy.type) proxyType = proxy.type;
       if (proxy.addr) proxyAddr = proxy.addr;
     }).catch(() => {});
+
+    loadPlayerBackend();
   });
 </script>
 
@@ -559,6 +601,44 @@
     <div class="reset-row">
       <button class="btn btn-ghost btn-sm reset-btn" onclick={resetUIDefaults}>Reset to Defaults</button>
     </div>
+  </div>
+
+  <!-- Video player (all modes: local, torrents, remote) -->
+  <div class="setting-group">
+    <div class="setting-label">Video Player</div>
+    <div class="setting-desc">
+      Used for Local, Mantorex torrents, and Remote playback. WebView is the built-in browser player.
+      Native (libmpv) embeds mpv for wider codec support.
+    </div>
+    <div class="player-backend-row">
+      <button
+        class="btn btn-sm"
+        class:btn-primary={playerBackend === 'webview'}
+        class:btn-ghost={playerBackend !== 'webview'}
+        onclick={() => setPlayerBackend('webview')}
+        disabled={playerBackendSaving}
+      >
+        WebView (default)
+      </button>
+      <button
+        class="btn btn-sm"
+        class:btn-primary={playerBackend === 'libmpv'}
+        class:btn-ghost={playerBackend !== 'libmpv'}
+        onclick={() => setPlayerBackend('libmpv')}
+        disabled={playerBackendSaving || !mpvAvailable}
+        title={mpvAvailable ? 'Use embedded libmpv' : (mpvReason || 'libmpv not available')}
+      >
+        Native (libmpv)
+      </button>
+    </div>
+    {#if !mpvAvailable}
+      <div class="text-muted player-backend-hint">
+        {mpvReason || 'Native player unavailable on this system. Install libmpv / mpv and use X11.'}
+      </div>
+    {/if}
+    {#if playerBackendMsg}
+      <div class="msg-success" style="margin-top:8px">{playerBackendMsg}</div>
+    {/if}
   </div>
 
   <!-- Library Backup -->
@@ -811,6 +891,17 @@
 
   .reset-btn {
     color: $red !important;
+  }
+
+  .player-backend-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .player-backend-hint {
+    margin-top: 8px;
+    font-size: 12px;
   }
 
   .backup-actions {

@@ -32,6 +32,7 @@ func main() {
 	settingsService := &SettingsService{}
 	licenseService := &LicenseService{}
 	playerService := &PlayerService{}
+	mpvService := NewMpvService()
 	codecService := &CodecService{}
 	torrentDlService := NewTorrentDownloadService(nil) // StreamService linked after ProServices
 	depsService := NewDepsService()
@@ -51,6 +52,7 @@ func main() {
 		settingsService,
 		licenseService,
 		playerService,
+		mpvService,
 		codecService,
 		depsService,
 		torrentDlService,
@@ -98,6 +100,7 @@ func main() {
 			downloadService.startup(ctx)
 			licenseService.startup(ctx)
 			playerService.startup(ctx)
+			mpvService.startup(ctx)
 			codecService.startup(ctx)
 			depsService.startup(ctx)
 			// Link torrent download service to the streaming service for client reuse
@@ -119,6 +122,7 @@ func main() {
 			ProStartup(ctx, proServices)
 		},
 		OnShutdown: func(ctx context.Context) {
+			mpvService.shutdown()
 			torrentDlService.shutdown()
 			mediaService.shutdown()
 			remoteService.shutdown()
