@@ -223,17 +223,45 @@
         setTimeout(() => { setupVisible = false; }, 2200);
       }
     }));
-    // yt-dlp first-time lines only (ignore if nothing is installing)
+    // yt-dlp first-time lines only (ignore tips / already-installed noise)
     setupCleanups.push(api.events.on('deps-progress', (data: any) => {
       if (!data?.message || setupDone) return;
-      const msg = String(data.message).toLowerCase();
+      const msg = String(data.message);
+      const low = msg.toLowerCase();
+      // Skip manual-install tips and optional warnings that are not real progress
+      if (low.includes('you can install it manually') ||
+          low.includes('skipping') ||
+          low.includes('not available') ||
+          low.includes('warning:') ||
+          low.includes('npm not found') ||
+          low.includes('webtorrent')) {
+        return;
+      }
       // Only show when actually downloading/installing tools
-      if (!msg.includes('download') && !msg.includes('install') && !msg.includes('extract') && !msg.includes('fetch')) {
+      if (!low.includes('download') && !low.includes('installing') && !low.includes('extract') && !low.includes('fetch')) {
         return;
       }
       setupVisible = true;
       setupName = 'yt-dlp';
-      setupMessage = data.message;
+      setupMessage = msg;
+      // Fake modest progress so we don't sit at 0% on text-only lines
+      if (setupPercent < 15) setupPercent = 15;
+    }));
+    setupCleanups.push(api.events.on('deps-ready', () => {
+      if (setupVisible && !setupError) {
+        setupDone = true;
+        setupPercent = 100;
+        setupMessage = 'Download tools ready';
+        setTimeout(() => { setupVisible = false; }, 1800);
+      }
+    }));
+    setupCleanups.push(api.events.on('deps-error', (data: any) => {
+      // Don't pin the banner on optional tool failures
+      const err = String(data?.error || '');
+      if (err.toLowerCase().includes('webtorrent')) return;
+      if (setupVisible) {
+        setupError = err || 'Setup failed';
+      }
     }));
 
     try {

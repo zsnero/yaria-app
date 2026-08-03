@@ -145,17 +145,18 @@ func mpvPlatformStart(ctx context.Context) error {
 	// mpv wants the pipe name without \\.\pipe\ prefix on some versions; try full path first
 	ipcArg := pipe
 
+	// Note: do not use --force-window with --wid (can open a second empty window).
 	cmd := exec.Command(exe,
 		fmt.Sprintf("--wid=%d", uint64(child)),
 		"--idle=yes",
 		"--keep-open=yes",
-		"--force-window=yes",
 		"--no-terminal",
 		"--osc=no",
 		"--input-default-bindings=no",
 		"--input-vo-keyboard=no",
 		"--cursor-autohide=always",
 		"--hwdec=auto-safe",
+		"--vo=gpu",
 		fmt.Sprintf("--input-ipc-server=%s", ipcArg),
 	)
 	hideConsole(cmd)
@@ -210,7 +211,7 @@ func mpvPlatformLoad(pathOrURL string) error {
 	}
 	_, err := w.command("loadfile", pathOrURL, "replace")
 	if err != nil {
-		return err
+		return fmt.Errorf("loadfile %q: %w", pathOrURL, err)
 	}
 	_, _ = w.command("set_property", "pause", false)
 	w.mu.Lock()
