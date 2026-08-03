@@ -860,16 +860,17 @@ select.setting-input option { background: #14141e; color: var(--text); }
 }
 
 /* UI Customization: Disable animations — loaders always keep spinning */
-html.no-animations *:not(.spinner):not(.spinner-svg):not(.spinner-arc):not(.spinner-container),
-html.no-animations *:not(.spinner):not(.spinner-svg):not(.spinner-container)::before,
-html.no-animations *:not(.spinner):not(.spinner-svg):not(.spinner-container)::after {
+html.no-animations *:not(.spinner):not(.spinner-svg):not(.spinner-arc):not(.spinner-container):not(.setup-spinner),
+html.no-animations *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner)::before,
+html.no-animations *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner)::after {
   animation-duration: 0s !important;
   animation-delay: 0s !important;
   transition-duration: 0s !important;
   transition-delay: 0s !important;
 }
 html.no-animations .spinner,
-html.no-animations .spinner-svg {
+html.no-animations .spinner-svg,
+html.no-animations .setup-spinner {
   animation: yaria-spin 0.75s linear infinite !important;
   animation-duration: 0.75s !important;
 }

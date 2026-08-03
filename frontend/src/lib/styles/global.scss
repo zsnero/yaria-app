@@ -427,18 +427,19 @@ img { transition: opacity 0.3s; }
 
 // UI Customization: kill decorative motion, but NEVER stop loaders
 html.no-animations {
-  *:not(.spinner):not(.spinner-svg):not(.spinner-arc):not(.spinner-container),
-  *:not(.spinner):not(.spinner-svg):not(.spinner-container)::before,
-  *:not(.spinner):not(.spinner-svg):not(.spinner-container)::after {
+  *:not(.spinner):not(.spinner-svg):not(.spinner-arc):not(.spinner-container):not(.setup-spinner),
+  *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner)::before,
+  *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner)::after {
     animation-duration: 0s !important;
     animation-delay: 0s !important;
     transition-duration: 0s !important;
     transition-delay: 0s !important;
   }
 
-  // Force loaders to keep spinning
+  // Force loaders to keep spinning (including setup banner)
   .spinner,
-  .spinner-svg {
+  .spinner-svg,
+  .setup-spinner {
     animation: yaria-spin 0.75s linear infinite !important;
     animation-duration: 0.75s !important;
     animation-delay: 0s !important;

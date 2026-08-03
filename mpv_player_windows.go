@@ -22,22 +22,38 @@ import (
 )
 
 var (
-	user32              = windows.NewLazySystemDLL("user32.dll")
-	procFindWindowW     = user32.NewProc("FindWindowW")
-	procCreateWindowExW = user32.NewProc("CreateWindowExW")
-	procDestroyWindow   = user32.NewProc("DestroyWindow")
-	procShowWindow      = user32.NewProc("ShowWindow")
-	procMoveWindow      = user32.NewProc("MoveWindow")
+	user32               = windows.NewLazySystemDLL("user32.dll")
+	procFindWindowW      = user32.NewProc("FindWindowW")
+	procCreateWindowExW  = user32.NewProc("CreateWindowExW")
+	procDestroyWindow    = user32.NewProc("DestroyWindow")
+	procShowWindow       = user32.NewProc("ShowWindow")
+	procMoveWindow       = user32.NewProc("MoveWindow")
+	procClientToScreen   = user32.NewProc("ClientToScreen")
+	procSetWindowPos     = user32.NewProc("SetWindowPos")
 )
 
 const (
-	wsChild        = 0x40000000
+	// WebView2 covers WS_CHILD windows — use an owned popup layered over the hole.
+	wsPopup        = 0x80000000
 	wsVisible      = 0x10000000
 	wsClipSiblings = 0x04000000
 	wsClipChildren = 0x02000000
+	wsExNoActivate = 0x08000000
+	wsExToolwindow = 0x00000080
+	wsExTopmost    = 0x00000008
 	swHide         = 0
-	swShow         = 5
+	swShowNoActivate = 4
+	swpNoZOrder    = 0x0004
+	swpNoActivate  = 0x0010
+	swpShowWindow  = 0x0040
+	swpHideWindow  = 0x0080
+	hwndTop        = 0
+	hwndTopmost    = ^uintptr(0) // -1
 )
+
+type point struct {
+	X, Y int32
+}
 
 type winMpv struct {
 	ctx        context.Context
@@ -119,9 +135,10 @@ func mpvPlatformStart(ctx context.Context) error {
 		return fmt.Errorf("could not find Yaria window")
 	}
 
-	child := createChildHWND(parent, 0, 0, 16, 16)
+	// Owned popup (not WS_CHILD) — WebView2 paints over child HWNDs
+	child := createOverlayHWND(parent, 0, 0, 16, 16)
 	if child == 0 {
-		return fmt.Errorf("failed to create child window")
+		return fmt.Errorf("failed to create overlay window")
 	}
 
 	pipe := fmt.Sprintf(`\\.\pipe\yaria-mpv-%d`, os.Getpid())
@@ -204,7 +221,7 @@ func mpvPlatformLoad(pathOrURL string) error {
 
 func mpvPlatformSetBounds(x, y, w, h float64) error {
 	st := winMPV
-	if st == nil || st.child == 0 {
+	if st == nil || st.child == 0 || st.parent == 0 {
 		return fmt.Errorf("mpv surface not ready")
 	}
 	ix, iy, iw, ih := int(x+0.5), int(y+0.5), int(w+0.5), int(h+0.5)
@@ -218,7 +235,9 @@ func mpvPlatformSetBounds(x, y, w, h float64) error {
 		return nil
 	}
 	st.lastB.x, st.lastB.y, st.lastB.w, st.lastB.h = ix, iy, iw, ih
-	moveHWND(st.child, ix, iy, iw, ih)
+	// Convert client (webview) coords → screen for owned popup
+	sx, sy := clientToScreen(st.parent, ix, iy)
+	moveHWND(st.child, sx, sy, iw, ih)
 	return nil
 }
 
@@ -227,8 +246,17 @@ func mpvPlatformSetVisible(visible bool) {
 	if st == nil || st.child == 0 {
 		return
 	}
+	const swpNoMove = 0x0002
+	const swpNoSize = 0x0001
 	if visible {
 		showHWND(st.child, true)
+		// Stay above WebView2 without activating
+		procSetWindowPos.Call(
+			uintptr(st.child),
+			hwndTopmost,
+			0, 0, 0, 0,
+			uintptr(swpNoMove|swpNoSize|swpNoActivate|swpShowWindow),
+		)
 	} else {
 		showHWND(st.child, false)
 	}
@@ -490,20 +518,29 @@ func findWindowByTitle(title string) windows.HWND {
 	return windows.HWND(r)
 }
 
-func createChildHWND(parent windows.HWND, x, y, w, h int) windows.HWND {
+func createOverlayHWND(owner windows.HWND, x, y, w, h int) windows.HWND {
 	className, _ := windows.UTF16PtrFromString("STATIC")
 	windowName, _ := windows.UTF16PtrFromString("")
-	style := uintptr(wsChild | wsVisible | wsClipSiblings | wsClipChildren)
+	// Owned popup sits above WebView2; owner keeps it tied to Yaria
+	exStyle := uintptr(wsExNoActivate | wsExToolwindow | wsExTopmost)
+	style := uintptr(wsPopup | wsVisible | wsClipSiblings | wsClipChildren)
+	sx, sy := clientToScreen(owner, x, y)
 	r, _, _ := procCreateWindowExW.Call(
-		0,
+		exStyle,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
 		style,
-		uintptr(x), uintptr(y), uintptr(w), uintptr(h),
-		uintptr(parent),
+		uintptr(sx), uintptr(sy), uintptr(w), uintptr(h),
+		uintptr(owner),
 		0, 0, 0,
 	)
 	return windows.HWND(r)
+}
+
+func clientToScreen(hwnd windows.HWND, x, y int) (int, int) {
+	pt := point{X: int32(x), Y: int32(y)}
+	procClientToScreen.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&pt)))
+	return int(pt.X), int(pt.Y)
 }
 
 func destroyHWND(h windows.HWND) {
@@ -519,7 +556,7 @@ func moveHWND(h windows.HWND, x, y, w, hgt int) {
 func showHWND(h windows.HWND, show bool) {
 	cmd := uintptr(swHide)
 	if show {
-		cmd = swShow
+		cmd = swShowNoActivate
 	}
 	procShowWindow.Call(uintptr(h), cmd)
 }

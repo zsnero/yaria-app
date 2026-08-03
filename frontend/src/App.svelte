@@ -464,7 +464,8 @@
     border: 2px solid rgba(255, 255, 255, 0.15);
     border-top-color: $accent;
     border-radius: 50%;
-    animation: spin 0.7s linear infinite;
+    /* use global yaria-spin so no-animations exceptions keep it moving */
+    animation: yaria-spin 0.75s linear infinite;
     flex-shrink: 0;
   }
 
