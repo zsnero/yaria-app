@@ -54,12 +54,13 @@
 
 ```bash
 curl -fsSL https://yaria.live/install.sh | bash
-export PATH="$HOME/.local/bin:$PATH"
 yaria-app
 ```
 
 Installs to `~/.local/bin` + desktop entry.  
 First run may ask once for permission to install **WebKitGTK** if missing.
+
+If `yaria-app` is not found, either open **Yaria** from the app menu, run `~/.local/bin/yaria-app`, or add `~/.local/bin` to your PATH (the installer prints the exact lines when needed).
 
 </details>
 
