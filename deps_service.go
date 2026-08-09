@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bodgit/sevenzip"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -228,12 +229,35 @@ func (d *DepsService) CheckDeps() map[string]interface{} {
 	}
 }
 
+// MpvLibPath returns a path to libmpv shared library only (for dlopen embed).
+func (d *DepsService) MpvLibPath() (string, bool) {
+	for _, name := range []string{"libmpv.so.2", "libmpv.so", "libmpv.so.1"} {
+		p := filepath.Join(d.depsDir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, true
+		}
+	}
+	for _, p := range []string{
+		"/usr/lib/libmpv.so.2", "/usr/lib/libmpv.so",
+		"/usr/lib64/libmpv.so.2", "/usr/lib64/libmpv.so",
+		"/usr/lib/x86_64-linux-gnu/libmpv.so.2",
+		"/usr/lib/aarch64-linux-gnu/libmpv.so.2",
+	} {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // MpvLibOrBinary returns a path to libmpv or mpv binary if found (system or deps dir).
 func (d *DepsService) MpvLibOrBinary() (string, bool) {
+	if p, ok := d.MpvLibPath(); ok {
+		return p, true
+	}
 	// Bundled / previously downloaded — prefer executable for Windows subprocess embed
 	for _, name := range []string{
 		"mpv.exe", "mpv.com", binaryName("mpv"), "mpv",
-		"libmpv.so", "libmpv.so.2", "libmpv.so.1",
 		"mpv-2.dll", "mpv.dll",
 		"libmpv.dylib",
 	} {
@@ -252,17 +276,6 @@ func (d *DepsService) MpvLibOrBinary() (string, bool) {
 			if st, err := os.Stat(p); err == nil && !st.IsDir() {
 				return p, true
 			}
-		}
-	}
-	// System library locations
-	for _, p := range []string{
-		"/usr/lib/libmpv.so", "/usr/lib/libmpv.so.2",
-		"/usr/lib64/libmpv.so", "/usr/lib64/libmpv.so.2",
-		"/usr/lib/x86_64-linux-gnu/libmpv.so.2",
-		"/usr/lib/aarch64-linux-gnu/libmpv.so.2",
-	} {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p, true
 		}
 	}
 	if path, err := exec.LookPath("mpv"); err == nil {
@@ -363,26 +376,27 @@ func (d *DepsService) downloadMpv() {
 	switch runtime.GOOS {
 	case "windows":
 		if err := d.downloadMpvWindows(emit); err != nil {
-			emit("error", 0, err.Error())
+			// Optional dependency — don't hard-fail the app setup banner
+			emit("complete", 100, "Native player skipped (optional): "+err.Error())
 			return
 		}
 	case "linux":
 		if err := d.downloadMpvLinux(emit); err != nil {
-			emit("error", 0, err.Error())
+			emit("complete", 100, "Native player skipped (optional): "+err.Error())
 			return
 		}
 	case "darwin":
-		emit("error", 0, "Auto-install of libmpv on macOS is not supported yet. Install mpv via Homebrew: brew install mpv")
+		emit("complete", 100, "Native player skipped (optional): install mpv via Homebrew — brew install mpv")
 		return
 	default:
-		emit("error", 0, "Unsupported platform for libmpv auto-install")
+		emit("complete", 100, "Native player skipped (optional): unsupported platform")
 		return
 	}
 
 	if p, ok := d.MpvLibOrBinary(); ok {
 		emit("complete", 100, "Native player installed: "+p)
 	} else {
-		emit("error", 0, "Download finished but libmpv was not found — try installing mpv from your package manager")
+		emit("complete", 100, "Native player skipped (optional) — WebView player still works")
 	}
 }
 
@@ -581,150 +595,576 @@ func (d *DepsService) extractSevenZipDlls(archive, destDir string) error {
 }
 
 func (d *DepsService) downloadMpvLinux(emit func(string, int, string)) error {
-	// 1) pacman download (Arch) without root
-	if _, err := exec.LookPath("pacman"); err == nil {
-		emit("downloading", 20, "Downloading mpv package (pacman)…")
-		cache := filepath.Join(d.depsDir, "pkgcache")
-		os.MkdirAll(cache, 0755)
-		cmd := exec.Command("pacman", "-Swdd", "--noconfirm", "--cachedir", cache, "mpv")
-		hideConsole(cmd)
-		if out, err := cmd.CombinedOutput(); err == nil {
-			emit("extracting", 70, "Extracting libmpv from package…")
-			if err := d.extractLibmpvFromPacmanCache(cache); err == nil {
-				return nil
-			} else {
-				emit("downloading", 75, "Package extract failed: "+err.Error())
-			}
-		} else {
-			emit("downloading", 30, "pacman download skipped: "+string(out))
-		}
+	var lastErr error
+	family := linuxDistroFamily()
+
+	tryOK := func() bool {
+		_, ok := d.MpvLibPath()
+		return ok
 	}
 
-	// 2) apt-get download (Debian/Ubuntu) without root
-	if _, err := exec.LookPath("apt-get"); err == nil {
-		emit("downloading", 35, "Downloading libmpv (apt)…")
-		cmd := exec.Command("apt-get", "download", "libmpv2")
-		cmd.Dir = d.depsDir
-		hideConsole(cmd)
-		if out, err := cmd.CombinedOutput(); err == nil {
-			emit("extracting", 70, "Extracting libmpv from .deb…")
-			if err := d.extractLibmpvFromDebs(d.depsDir); err == nil {
+	// --- Arch family ---
+	if family == "arch" || hasCmd("pacman") {
+		if hasCmd("pacman") {
+			emit("downloading", 10, "Downloading mpv via pacman (no root)…")
+			if err := d.downloadMpvViaUserPacman(emit); err == nil && tryOK() {
 				return nil
+			} else if err != nil {
+				lastErr = err
+				emit("downloading", 15, "pacman: "+trimOut(err.Error()))
 			}
-			emit("downloading", 75, "deb extract failed: "+err.Error())
-		} else {
-			// try libmpv1 older name
-			cmd = exec.Command("apt-get", "download", "libmpv1")
-			cmd.Dir = d.depsDir
-			hideConsole(cmd)
-			if out2, err2 := cmd.CombinedOutput(); err2 == nil {
-				if err := d.extractLibmpvFromDebs(d.depsDir); err == nil {
-					return nil
-				}
-			} else {
-				emit("downloading", 40, "apt download skipped: "+string(out)+string(out2))
+		}
+		// Arch package mirrors (only on Arch-like — glibc/soname match)
+		if family == "arch" || hasCmd("pacman") {
+			emit("downloading", 20, "Downloading libmpv from Arch mirrors…")
+			if err := d.downloadMpvArchHTTP(emit); err == nil && tryOK() {
+				return nil
+			} else if err != nil {
+				lastErr = err
+				emit("downloading", 25, "arch mirror: "+trimOut(err.Error()))
 			}
 		}
 	}
 
-	return fmt.Errorf("could not auto-download libmpv — install with: sudo pacman -S mpv  OR  sudo apt install libmpv2 mpv")
+	// --- Debian / Ubuntu / Mint / Pop! ---
+	if family == "debian" || hasCmd("apt-get") {
+		emit("downloading", 30, "Downloading libmpv (apt, no root)…")
+		if err := d.downloadMpvApt(emit); err == nil && tryOK() {
+			return nil
+		} else if err != nil {
+			lastErr = err
+			emit("downloading", 40, "apt: "+trimOut(err.Error()))
+		}
+	}
+
+	// --- Fedora / RHEL / CentOS / Nobara ---
+	if family == "fedora" || hasCmd("dnf") || hasCmd("yum") || hasCmd("microdnf") {
+		emit("downloading", 45, "Downloading libmpv (dnf/yum, no root)…")
+		if err := d.downloadMpvDnf(emit); err == nil && tryOK() {
+			return nil
+		} else if err != nil {
+			lastErr = err
+			emit("downloading", 55, "dnf: "+trimOut(err.Error()))
+		}
+	}
+
+	// --- openSUSE ---
+	if family == "suse" || hasCmd("zypper") {
+		emit("downloading", 60, "Downloading libmpv (zypper)…")
+		if err := d.downloadMpvZypper(emit); err == nil && tryOK() {
+			return nil
+		} else if err != nil {
+			lastErr = err
+			emit("downloading", 70, "zypper: "+trimOut(err.Error()))
+		}
+	}
+
+	// Generic last resort: if we're not sure of family, try apt then dnf then arch HTTP
+	if family == "unknown" {
+		if hasCmd("apt-get") {
+			_ = d.downloadMpvApt(emit)
+			if tryOK() {
+				return nil
+			}
+		}
+		if hasCmd("dnf") {
+			_ = d.downloadMpvDnf(emit)
+			if tryOK() {
+				return nil
+			}
+		}
+		if err := d.downloadMpvArchHTTP(emit); err == nil && tryOK() {
+			return nil
+		} else if err != nil {
+			lastErr = err
+		}
+	}
+
+	hint := linuxMpvInstallHint()
+	if lastErr != nil {
+		return fmt.Errorf("could not auto-download libmpv (%v). WebView still works. Optional: %s", lastErr, hint)
+	}
+	return fmt.Errorf("could not auto-download libmpv. WebView still works. Optional: %s", hint)
 }
 
-func (d *DepsService) extractLibmpvFromPacmanCache(cache string) error {
-	entries, _ := os.ReadDir(cache)
-	var pkg string
-	for _, e := range entries {
-		n := e.Name()
-		if strings.HasPrefix(n, "mpv-") && (strings.HasSuffix(n, ".pkg.tar.zst") || strings.HasSuffix(n, ".pkg.tar.xz")) {
-			pkg = filepath.Join(cache, n)
+func hasCmd(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// linuxDistroFamily returns arch|debian|fedora|suse|unknown from /etc/os-release.
+func linuxDistroFamily() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return "unknown"
+	}
+	low := strings.ToLower(string(data))
+	id, like := "", ""
+	for _, line := range strings.Split(low, "\n") {
+		if strings.HasPrefix(line, "id=") {
+			id = strings.Trim(strings.TrimPrefix(line, "id="), `"'`)
+		}
+		if strings.HasPrefix(line, "id_like=") {
+			like = strings.Trim(strings.TrimPrefix(line, "id_like="), `"'`)
+		}
+	}
+	blob := id + " " + like
+	switch {
+	case strings.Contains(blob, "arch") || strings.Contains(blob, "manjaro") ||
+		strings.Contains(blob, "cachy") || strings.Contains(blob, "endeavouros") ||
+		strings.Contains(blob, "garuda") || strings.Contains(blob, "artix"):
+		return "arch"
+	case strings.Contains(blob, "debian") || strings.Contains(blob, "ubuntu") ||
+		strings.Contains(blob, "mint") || strings.Contains(blob, "pop") ||
+		strings.Contains(blob, "elementary") || strings.Contains(blob, "zorin") ||
+		strings.Contains(blob, "raspbian") || strings.Contains(blob, "kali"):
+		return "debian"
+	case strings.Contains(blob, "fedora") || strings.Contains(blob, "rhel") ||
+		strings.Contains(blob, "centos") || strings.Contains(blob, "rocky") ||
+		strings.Contains(blob, "alma") || strings.Contains(blob, "nobara") ||
+		strings.Contains(blob, "mageia") || strings.Contains(blob, "openmandriva"):
+		return "fedora"
+	case strings.Contains(blob, "suse") || strings.Contains(blob, "opensuse") ||
+		strings.Contains(blob, "sles"):
+		return "suse"
+	default:
+		return "unknown"
+	}
+}
+
+func linuxMpvInstallHint() string {
+	switch linuxDistroFamily() {
+	case "debian":
+		return "sudo apt install libmpv2 mpv"
+	case "fedora":
+		return "sudo dnf install mpv-libs mpv"
+	case "suse":
+		return "sudo zypper install libmpv2 mpv"
+	case "arch":
+		return "sudo pacman -S mpv"
+	default:
+		return "install mpv / libmpv via your package manager"
+	}
+}
+
+func (d *DepsService) downloadMpvApt(emit func(string, int, string)) error {
+	if !hasCmd("apt-get") {
+		return fmt.Errorf("apt-get not found")
+	}
+	pkgs := []string{"libmpv2", "libmpv1", "libmpv2t64"}
+	// Best-effort codec deps (names vary by Ubuntu release)
+	extra := []string{
+		"libavcodec61", "libavcodec60", "libavcodec59", "libavcodec58",
+		"libavformat61", "libavformat60", "libavformat59", "libavformat58",
+		"libavutil59", "libavutil58", "libavutil57", "libavutil56",
+		"libswscale8", "libswscale7", "libswscale6", "libswscale5",
+		"libswresample5", "libswresample4", "libswresample3",
+		"libplacebo349", "libplacebo338", "libplacebo292", "libplacebo264",
+		"libass9", "libass9t64",
+	}
+	got := false
+	for _, pkg := range pkgs {
+		cmd := exec.Command("apt-get", "download", pkg)
+		cmd.Dir = d.depsDir
+		hideConsole(cmd)
+		if _, err := cmd.CombinedOutput(); err == nil {
+			got = true
 			break
 		}
 	}
-	if pkg == "" {
-		return fmt.Errorf("mpv package not found in cache")
+	if !got {
+		return fmt.Errorf("apt-get download libmpv failed (run apt update?)")
+	}
+	for _, pkg := range extra {
+		cmd := exec.Command("apt-get", "download", pkg)
+		cmd.Dir = d.depsDir
+		hideConsole(cmd)
+		_, _ = cmd.CombinedOutput()
+	}
+	emit("extracting", 65, "Extracting libraries from .deb packages…")
+	if err := d.extractAllLibsFromDebs(d.depsDir); err != nil {
+		return err
+	}
+	if _, ok := d.MpvLibPath(); !ok {
+		return fmt.Errorf("libmpv.so not found in debs")
+	}
+	return nil
+}
+
+func (d *DepsService) downloadMpvDnf(emit func(string, int, string)) error {
+	cache := filepath.Join(d.depsDir, "rpmcache")
+	os.MkdirAll(cache, 0755)
+	pkgs := []string{"mpv-libs", "mpv", "libmpv", "mpv-libs-unstable"}
+
+	var dlErr error
+	if hasCmd("dnf") {
+		// dnf download does not need root
+		args := append([]string{"download", "--destdir=" + cache, "-y"}, pkgs...)
+		cmd := exec.Command("dnf", args...)
+		hideConsole(cmd)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			// Try minimal set
+			cmd = exec.Command("dnf", "download", "--destdir="+cache, "-y", "mpv-libs")
+			hideConsole(cmd)
+			if out2, err2 := cmd.CombinedOutput(); err2 != nil {
+				dlErr = fmt.Errorf("%s | %s", trimOut(string(out)), trimOut(string(out2)))
+			}
+		}
+	} else if hasCmd("yumdownloader") {
+		cmd := exec.Command("yumdownloader", "--destdir="+cache, "mpv-libs", "mpv")
+		hideConsole(cmd)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			dlErr = fmt.Errorf("%s", trimOut(string(out)))
+		}
+	} else if hasCmd("yum") {
+		cmd := exec.Command("yum", "download", "--destdir="+cache, "mpv-libs")
+		hideConsole(cmd)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			dlErr = fmt.Errorf("%s", trimOut(string(out)))
+		}
+	} else {
+		return fmt.Errorf("dnf/yum not found")
+	}
+
+	emit("extracting", 70, "Extracting libraries from RPM packages…")
+	if err := d.extractAllLibsFromRpms(cache); err != nil {
+		if dlErr != nil {
+			return fmt.Errorf("%v; extract: %v", dlErr, err)
+		}
+		return err
+	}
+	if _, ok := d.MpvLibPath(); !ok {
+		if dlErr != nil {
+			return dlErr
+		}
+		return fmt.Errorf("libmpv.so not found in RPMs")
+	}
+	return nil
+}
+
+func (d *DepsService) downloadMpvZypper(emit func(string, int, string)) error {
+	if !hasCmd("zypper") {
+		return fmt.Errorf("zypper not found")
+	}
+	cache := filepath.Join(d.depsDir, "rpmcache")
+	os.MkdirAll(cache, 0755)
+	// zypper install --download-only needs root on some versions; try download command
+	for _, pkg := range []string{"libmpv2", "libmpv1", "mpv"} {
+		cmd := exec.Command("zypper", "--non-interactive", "--pkg-cache-dir", cache, "download", pkg)
+		hideConsole(cmd)
+		_, _ = cmd.CombinedOutput()
+	}
+	// Packages may land in cache/packages/*
+	emit("extracting", 75, "Extracting libraries from zypper packages…")
+	if err := d.extractAllLibsFromRpms(cache); err != nil {
+		return err
+	}
+	if _, ok := d.MpvLibPath(); !ok {
+		return fmt.Errorf("libmpv.so not found in zypper packages")
+	}
+	return nil
+}
+
+// extractAllLibsFromRpms walks dir for .rpm files and extracts shared libs.
+func (d *DepsService) extractAllLibsFromRpms(dir string) error {
+	var rpms []string
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(info.Name()), ".rpm") {
+			rpms = append(rpms, path)
+		}
+		return nil
+	})
+	if len(rpms) == 0 {
+		return fmt.Errorf("no RPM files in %s", dir)
+	}
+	tmp := filepath.Join(d.depsDir, "mpv_rpm_extract")
+	os.RemoveAll(tmp)
+	os.MkdirAll(tmp, 0755)
+	defer os.RemoveAll(tmp)
+
+	extracted := 0
+	for _, rpm := range rpms {
+		// bsdtar handles rpm; fallback rpm2cpio | cpio
+		var cmd *exec.Cmd
+		if hasCmd("bsdtar") {
+			cmd = exec.Command("bsdtar", "-xf", rpm, "-C", tmp)
+		} else if hasCmd("rpm2cpio") && hasCmd("cpio") {
+			// shell pipeline
+			cmd = exec.Command("sh", "-c", fmt.Sprintf("rpm2cpio %q | cpio -idm -D %q", rpm, tmp))
+		} else {
+			continue
+		}
+		hideConsole(cmd)
+		if _, err := cmd.CombinedOutput(); err != nil {
+			continue
+		}
+		extracted++
+	}
+	if extracted == 0 {
+		return fmt.Errorf("could not extract any RPMs (need bsdtar or rpm2cpio)")
+	}
+	return d.copySharedLibsFromTree(tmp)
+}
+
+// downloadMpvViaUserPacman syncs package DBs into a user-owned path and downloads
+// mpv without root — works on Arch/CachyOS live sessions.
+func (d *DepsService) downloadMpvViaUserPacman(emit func(string, int, string)) error {
+	home, _ := os.UserHomeDir()
+	dbPath := filepath.Join(home, ".cache", "yaria", "pacman-db")
+	cache := filepath.Join(d.depsDir, "pkgcache")
+	os.MkdirAll(dbPath, 0755)
+	os.MkdirAll(cache, 0755)
+
+	// Refresh sync DBs into user dbpath
+	sync := exec.Command("pacman", "-Sy", "--noconfirm", "--dbpath", dbPath, "--cachedir", cache)
+	hideConsole(sync)
+	if out, err := sync.CombinedOutput(); err != nil {
+		// Still try download; DBs might already exist
+		_ = out
+	}
+
+	// Download mpv + deps (no install)
+	cmd := exec.Command("pacman", "-Sw", "--noconfirm", "--dbpath", dbPath, "--cachedir", cache, "mpv")
+	hideConsole(cmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Dependency-less fallback
+		cmd2 := exec.Command("pacman", "-Swdd", "--noconfirm", "--dbpath", dbPath, "--cachedir", cache, "mpv")
+		hideConsole(cmd2)
+		if out2, err2 := cmd2.CombinedOutput(); err2 != nil {
+			return fmt.Errorf("%s | %s", trimOut(string(out)), trimOut(string(out2)))
+		}
+	}
+
+	emit("extracting", 55, "Extracting libmpv from packages…")
+	return d.extractAllLibsFromPacmanCache(cache)
+}
+
+// downloadMpvArchHTTP fetches the mpv package (and ffmpeg if needed) from Arch mirrors.
+func (d *DepsService) downloadMpvArchHTTP(emit func(string, int, string)) error {
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x86_64"
+	} else if arch == "arm64" {
+		arch = "aarch64"
+	}
+	// Packages that commonly provide libmpv + runtime codecs
+	pkgs := []string{"mpv", "ffmpeg"}
+	cache := filepath.Join(d.depsDir, "pkgcache")
+	os.MkdirAll(cache, 0755)
+
+	got := 0
+	for i, pkg := range pkgs {
+		pct := 30 + i*15
+		emit("downloading", pct, "Fetching "+pkg+" package…")
+		url, filename, err := archPackageDownloadURL(pkg, arch)
+		if err != nil {
+			if pkg == "mpv" {
+				return err
+			}
+			continue
+		}
+		dest := filepath.Join(cache, filename)
+		if err := d.downloadToFile(url, dest, emit, pct, pct+12); err != nil {
+			if pkg == "mpv" {
+				return err
+			}
+			continue
+		}
+		got++
+	}
+	if got == 0 {
+		return fmt.Errorf("no packages downloaded")
+	}
+	emit("extracting", 75, "Extracting libraries…")
+	return d.extractAllLibsFromPacmanCache(cache)
+}
+
+// archPackageDownloadURL resolves an Arch package to a mirror URL via packages API.
+func archPackageDownloadURL(pkg, arch string) (url, filename string, err error) {
+	// Try extra then community/extra-testing style repos
+	repos := []string{"extra", "core", "multilib"}
+	client := &http.Client{Timeout: 30 * time.Second}
+	for _, repo := range repos {
+		api := fmt.Sprintf("https://archlinux.org/packages/%s/%s/%s/json/", repo, arch, pkg)
+		req, _ := http.NewRequest("GET", api, nil)
+		req.Header.Set("User-Agent", "Yaria-Deps")
+		resp, e := client.Do(req)
+		if e != nil || resp.StatusCode != 200 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			continue
+		}
+		var meta struct {
+			Filename string `json:"filename"`
+			Repo     string `json:"repo"`
+			Arch     string `json:"arch"`
+			PkgVer   string `json:"pkgver"`
+			PkgRel   string `json:"pkgrel"`
+			Epoch    int    `json:"epoch"`
+		}
+		decErr := json.NewDecoder(resp.Body).Decode(&meta)
+		resp.Body.Close()
+		if decErr != nil || meta.Filename == "" {
+			continue
+		}
+		// Stable CDN
+		url = fmt.Sprintf("https://geo.mirror.pkgbuild.com/%s/os/%s/%s", repo, arch, meta.Filename)
+		return url, meta.Filename, nil
+	}
+	// Fallback: archlinux.org redirect endpoint
+	redir := fmt.Sprintf("https://archlinux.org/packages/extra/%s/%s/download/", arch, pkg)
+	return redir, pkg + ".pkg.tar.zst", nil
+}
+
+func trimOut(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 200 {
+		return s[:200] + "…"
+	}
+	return s
+}
+
+// extractAllLibsFromPacmanCache unpacks every package in cache and copies shared libs + mpv binary.
+func (d *DepsService) extractAllLibsFromPacmanCache(cache string) error {
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		return err
 	}
 	tmp := filepath.Join(d.depsDir, "mpv_pkg_extract")
 	os.RemoveAll(tmp)
 	os.MkdirAll(tmp, 0755)
 	defer os.RemoveAll(tmp)
 
-	var cmd *exec.Cmd
-	if strings.HasSuffix(pkg, ".zst") {
-		if _, err := exec.LookPath("bsdtar"); err == nil {
-			cmd = exec.Command("bsdtar", "-xf", pkg, "-C", tmp)
-		} else {
-			cmd = exec.Command("tar", "--use-compress-program=zstd", "-xf", pkg, "-C", tmp)
-		}
-	} else {
-		cmd = exec.Command("tar", "-xf", pkg, "-C", tmp)
-	}
-	hideConsole(cmd)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("tar: %v (%s)", err, string(out))
-	}
-	return d.copyLibmpvFromTree(tmp)
-}
-
-func (d *DepsService) extractLibmpvFromDebs(dir string) error {
-	entries, _ := os.ReadDir(dir)
-	var deb string
+	extracted := 0
 	for _, e := range entries {
 		n := e.Name()
-		if strings.HasPrefix(n, "libmpv") && strings.HasSuffix(n, ".deb") {
-			deb = filepath.Join(dir, n)
-			break
+		if !(strings.HasSuffix(n, ".pkg.tar.zst") || strings.HasSuffix(n, ".pkg.tar.xz") || strings.HasSuffix(n, ".pkg.tar.gz")) {
+			continue
 		}
+		pkg := filepath.Join(cache, n)
+		var cmd *exec.Cmd
+		if strings.HasSuffix(pkg, ".zst") {
+			if _, err := exec.LookPath("bsdtar"); err == nil {
+				cmd = exec.Command("bsdtar", "-xf", pkg, "-C", tmp)
+			} else {
+				cmd = exec.Command("tar", "--use-compress-program=zstd", "-xf", pkg, "-C", tmp)
+			}
+		} else {
+			cmd = exec.Command("tar", "-xf", pkg, "-C", tmp)
+		}
+		hideConsole(cmd)
+		if _, err := cmd.CombinedOutput(); err != nil {
+			continue
+		}
+		extracted++
 	}
-	if deb == "" {
-		return fmt.Errorf("no libmpv deb found")
+	if extracted == 0 {
+		return fmt.Errorf("no packages extracted from cache")
 	}
+	return d.copySharedLibsFromTree(tmp)
+}
+
+func (d *DepsService) extractAllLibsFromDebs(dir string) error {
+	entries, _ := os.ReadDir(dir)
 	tmp := filepath.Join(d.depsDir, "mpv_deb_extract")
 	os.RemoveAll(tmp)
 	os.MkdirAll(tmp, 0755)
 	defer os.RemoveAll(tmp)
 
-	if _, err := exec.LookPath("dpkg-deb"); err == nil {
-		cmd := exec.Command("dpkg-deb", "-x", deb, tmp)
-		hideConsole(cmd)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("dpkg-deb: %v (%s)", err, string(out))
+	count := 0
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".deb") {
+			continue
 		}
-	} else {
-		// ar x + tar
-		cmd := exec.Command("sh", "-c", fmt.Sprintf("cd %q && ar x %q && tar xf data.tar.* -C %q", tmp, deb, tmp))
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("ar/tar: %v (%s)", err, string(out))
+		deb := filepath.Join(dir, n)
+		if _, err := exec.LookPath("dpkg-deb"); err == nil {
+			cmd := exec.Command("dpkg-deb", "-x", deb, tmp)
+			hideConsole(cmd)
+			if _, err := cmd.CombinedOutput(); err != nil {
+				continue
+			}
+		} else {
+			cmd := exec.Command("sh", "-c", fmt.Sprintf("cd %q && ar x %q && tar xf data.tar.* -C %q", tmp, deb, tmp))
+			if _, err := cmd.CombinedOutput(); err != nil {
+				continue
+			}
 		}
+		count++
 	}
-	return d.copyLibmpvFromTree(tmp)
+	if count == 0 {
+		return fmt.Errorf("no debs extracted")
+	}
+	return d.copySharedLibsFromTree(tmp)
 }
 
-func (d *DepsService) copyLibmpvFromTree(root string) error {
-	var found string
+// copySharedLibsFromTree copies libmpv, related .so*, and mpv binary into depsDir.
+func (d *DepsService) copySharedLibsFromTree(root string) error {
+	var foundLib string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 		base := info.Name()
-		if strings.HasPrefix(base, "libmpv.so") {
-			dest := filepath.Join(d.depsDir, base)
-			data, err := os.ReadFile(path)
-			if err != nil {
+		// Shared libraries
+		if strings.Contains(base, ".so") {
+			// Keep only library-looking names
+			if !strings.HasPrefix(base, "lib") && !strings.Contains(base, ".so.") {
 				return nil
 			}
-			_ = os.WriteFile(dest, data, 0755)
-			if found == "" || base == "libmpv.so.2" || base == "libmpv.so" {
-				found = dest
+			dest := filepath.Join(d.depsDir, base)
+			if err := copyFileMode(path, dest, 0755); err != nil {
+				return nil
 			}
+			if strings.HasPrefix(base, "libmpv.so") {
+				if foundLib == "" || base == "libmpv.so.2" || base == "libmpv.so" {
+					foundLib = dest
+				}
+			}
+		}
+		// mpv binary (optional; Windows-style IPC fallback / CLI)
+		if base == "mpv" {
+			dest := filepath.Join(d.depsDir, "mpv")
+			_ = copyFileMode(path, dest, 0755)
 		}
 		return nil
 	})
-	if found == "" {
-		return fmt.Errorf("libmpv.so not found in package")
+	if foundLib == "" {
+		return fmt.Errorf("libmpv.so not found in packages")
 	}
-	// Convenience symlink name
-	_ = os.Symlink(filepath.Base(found), filepath.Join(d.depsDir, "libmpv.so"))
+	link := filepath.Join(d.depsDir, "libmpv.so")
+	_ = os.Remove(link)
+	_ = os.Symlink(filepath.Base(foundLib), link)
+	// Ensure soname libmpv.so.2 exists for dlopen
+	if !strings.HasSuffix(foundLib, "libmpv.so.2") {
+		link2 := filepath.Join(d.depsDir, "libmpv.so.2")
+		if _, err := os.Stat(link2); err != nil {
+			_ = os.Symlink(filepath.Base(foundLib), link2)
+		}
+	}
 	return nil
+}
+
+func copyFileMode(src, dest string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	cerr := out.Close()
+	if err != nil {
+		return err
+	}
+	return cerr
 }
 
 func (d *DepsService) downloadToFile(url, dest string, emit func(string, int, string), pctLo, pctHi int) error {

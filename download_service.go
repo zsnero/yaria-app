@@ -53,17 +53,18 @@ type activeDownload struct {
 
 // DownloadService provides video download methods to the frontend via Wails bindings.
 type DownloadService struct {
-	ctx        context.Context
-	mu         sync.Mutex
-	dl         *downloader.YTDLPDownloader
-	cfg        *config.Config
-	downloads  map[string]*activeDownload
-	nextID     int
-	depsReady  bool
-	store      *DownloadStore
-	maxRunning int
-	running    int
-	waitQueue  []string // IDs of queued-for-slot downloads
+	ctx             context.Context
+	mu              sync.Mutex
+	dl              *downloader.YTDLPDownloader
+	cfg             *config.Config
+	downloads       map[string]*activeDownload
+	nextID          int
+	depsReady       bool
+	depsInitStarted bool
+	store           *DownloadStore
+	maxRunning      int
+	running         int
+	waitQueue       []string // IDs of queued-for-slot downloads
 }
 
 // NewDownloadService creates a DownloadService with default config.
@@ -104,19 +105,51 @@ func (d *DownloadService) shutdown(ctx context.Context) {
 // Heavy work runs in a goroutine; returns immediately.
 // Emits "deps-progress" events with each line of output from the installer,
 // then "deps-error" on failure or "deps-ready" on success.
+// Safe to call multiple times (App + Home both invoke it) — only one run.
 func (d *DownloadService) InitDeps() map[string]interface{} {
+	d.mu.Lock()
+	if d.depsReady && d.dl != nil {
+		d.mu.Unlock()
+		// Already ready — re-emit so late subscribers update UI
+		if d.ctx != nil {
+			wailsRuntime.EventsEmit(d.ctx, "deps-ready", map[string]interface{}{"status": "ready"})
+		}
+		return map[string]interface{}{"status": "ready"}
+	}
+	if d.depsInitStarted {
+		d.mu.Unlock()
+		return map[string]interface{}{"status": "initializing"}
+	}
+	d.depsInitStarted = true
+	d.mu.Unlock()
+
 	go func() {
-		// Capture installer output and emit as UI events
+		defer func() {
+			if r := recover(); r != nil {
+				msg := fmt.Sprintf("dependency setup panic: %v", r)
+				if d.ctx != nil {
+					wailsRuntime.EventsEmit(d.ctx, "deps-error", map[string]interface{}{"error": msg})
+				}
+				d.mu.Lock()
+				d.depsInitStarted = false // allow retry
+				d.mu.Unlock()
+			}
+		}()
+
+		// Capture installer output and emit as UI events.
+		// Never assign nil writers — fmt.Fprintf panics on nil io.Writer, and
+		// concurrent callers used to race on cfg.Stdout/Stderr.
 		pr, pw := io.Pipe()
+		d.mu.Lock()
 		d.cfg.Stdout = pw
 		d.cfg.Stderr = pw
+		d.mu.Unlock()
 
-		// Read output lines and emit to frontend
 		go func() {
 			scanner := bufio.NewScanner(pr)
 			for scanner.Scan() {
 				line := scanner.Text()
-				if line != "" {
+				if line != "" && d.ctx != nil {
 					wailsRuntime.EventsEmit(d.ctx, "deps-progress", map[string]interface{}{
 						"message": line,
 					})
@@ -125,25 +158,34 @@ func (d *DownloadService) InitDeps() map[string]interface{} {
 		}()
 
 		dl, err := downloader.New(d.cfg)
-		pw.Close()
+		_ = pw.Close()
 
-		// Reset stdout/stderr so downloads use their own pipe
-		d.cfg.Stdout = nil
-		d.cfg.Stderr = nil
+		// Restore non-nil discard writers (downloads attach their own pipes)
+		d.mu.Lock()
+		d.cfg.Stdout = io.Discard
+		d.cfg.Stderr = io.Discard
+		d.mu.Unlock()
 
 		if err != nil {
-			wailsRuntime.EventsEmit(d.ctx, "deps-error", map[string]interface{}{
-				"error": err.Error(),
-			})
+			if d.ctx != nil {
+				wailsRuntime.EventsEmit(d.ctx, "deps-error", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+			d.mu.Lock()
+			d.depsInitStarted = false // allow retry
+			d.mu.Unlock()
 			return
 		}
 		d.mu.Lock()
 		d.dl = dl
 		d.depsReady = true
 		d.mu.Unlock()
-		wailsRuntime.EventsEmit(d.ctx, "deps-ready", map[string]interface{}{
-			"status": "ready",
-		})
+		if d.ctx != nil {
+			wailsRuntime.EventsEmit(d.ctx, "deps-ready", map[string]interface{}{
+				"status": "ready",
+			})
+		}
 	}()
 	return map[string]interface{}{"status": "initializing"}
 }
@@ -444,6 +486,14 @@ func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, 
 	if containerFormat == "" {
 		containerFormat = "mp4"
 	}
+	destCheck := expandTilde(downloadDir)
+	if destCheck == "" {
+		home, _ := os.UserHomeDir()
+		destCheck = filepath.Join(home, "Downloads")
+	}
+	if err := ensureDiskSpace(destCheck, minFreeDiskBytes); err != nil {
+		return map[string]interface{}{"error": err.Error(), "error_type": "disk_full"}
+	}
 
 	d.mu.Lock()
 	d.nextID++
@@ -546,7 +596,7 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	ad.pipeWriter = pw
 	d.mu.Unlock()
 	d.cfg.Stdout = pw
-	d.cfg.Stderr = pw
+	d.cfg.Stderr = pw // never leave these nil — fmt.Fprintf panics on nil Writer
 	go d.parseProgress(dlCtx, id, pr)
 
 	d.updateDownload(id, "downloading", 0, "", "", "")
@@ -556,15 +606,15 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	success, dlErr := d.dl.Download([]string{url}, dest)
 	pw.Close()
 
-	// Restore original config
+	// Restore original config (writers must stay non-nil)
 	d.mu.Lock()
 	d.cfg.Resolution = origRes
 	d.cfg.IsAudioOnly = origAudio
 	d.cfg.AudioFormat = origAudioFmt
 	d.cfg.OutputTemplate = origTemplate
 	d.cfg.ContainerFormat = origContainer
-	d.cfg.Stdout = nil
-	d.cfg.Stderr = nil
+	d.cfg.Stdout = io.Discard
+	d.cfg.Stderr = io.Discard
 	d.mu.Unlock()
 
 	// Check for cancellation
@@ -1141,6 +1191,8 @@ func (d *DownloadService) DetectPlaylist(rawURL string) map[string]interface{} {
 func classifyError(errMsg string) (string, string) {
 	msg := strings.ToLower(errMsg)
 	switch {
+	case isDiskFullMessage(errMsg):
+		return "disk_full", diskFullUserMsg
 	case strings.Contains(msg, "could not copy") && strings.Contains(msg, "cookie"),
 		strings.Contains(msg, "could not read browser cookies"),
 		strings.Contains(msg, "cookie database"):

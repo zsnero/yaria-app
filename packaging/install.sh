@@ -80,22 +80,64 @@ $DL_OUT "$TMP_DIR/yaria.tar.gz" "$DOWNLOAD_URL"
 info "Extracting..."
 tar -xzf "$TMP_DIR/yaria.tar.gz" -C "$TMP_DIR"
 
-# Find the binary
-BINARY=$(find "$TMP_DIR" -name "yaria-app" -type f -executable | head -1)
+# Find the REAL ELF binary (never the shell launcher named yaria-app)
+BINARY=""
+if [ -f "$TMP_DIR/yaria-app/yaria-app.bin" ]; then
+    BINARY="$TMP_DIR/yaria-app/yaria-app.bin"
+else
+    BINARY=$(find "$TMP_DIR" -name "yaria-app.bin" -type f -executable | head -1)
+fi
 if [ -z "$BINARY" ]; then
-    BINARY=$(find "$TMP_DIR" -type f -executable ! -name "*.sh" | head -1)
+    # Legacy packages: single ELF named yaria-app (not a script)
+    while IFS= read -r cand; do
+        if file -b "$cand" 2>/dev/null | grep -qiE 'ELF|executable'; then
+            if ! head -1 "$cand" 2>/dev/null | grep -q '^#!'; then
+                BINARY="$cand"
+                break
+            fi
+        fi
+    done < <(find "$TMP_DIR" -name "yaria-app" -type f -executable 2>/dev/null)
+fi
+if [ -z "$BINARY" ]; then
+    BINARY=$(find "$TMP_DIR" -type f -executable ! -name "*.sh" ! -name "yaria-app" ! -name "yaria-launcher.sh" | head -1)
 fi
 
 if [ -z "$BINARY" ]; then
     error "Could not find the Yaria binary in the archive."
 fi
 
-# --- Install binary ---
+# --- Install binary + launcher (auto-installs WebKit if missing) ---
 info "Installing to ${INSTALL_DIR}..."
 mkdir -p "$INSTALL_DIR"
-cp "$BINARY" "$INSTALL_DIR/yaria-app"
-chmod 755 "$INSTALL_DIR/yaria-app"
-ok "Binary installed: ${INSTALL_DIR}/yaria-app"
+cp "$BINARY" "$INSTALL_DIR/yaria-app.bin"
+chmod 755 "$INSTALL_DIR/yaria-app.bin"
+# Sanity: must be ELF, not a shell script
+if head -1 "$INSTALL_DIR/yaria-app.bin" 2>/dev/null | grep -q '^#!'; then
+    error "Install failed: binary looks like a script (package layout bug). Re-download and try again."
+fi
+
+LAUNCHER_SRC=$(find "$TMP_DIR" -name "yaria-launcher.sh" -type f | head -1)
+DEPS_SRC=$(find "$TMP_DIR" -name "linux-deps.sh" -type f | head -1)
+if [ -z "$LAUNCHER_SRC" ] && [ -f "$(dirname "$0")/yaria-launcher.sh" ]; then
+    LAUNCHER_SRC="$(dirname "$0")/yaria-launcher.sh"
+fi
+if [ -z "$DEPS_SRC" ] && [ -f "$(dirname "$0")/linux-deps.sh" ]; then
+    DEPS_SRC="$(dirname "$0")/linux-deps.sh"
+fi
+if [ -n "$LAUNCHER_SRC" ]; then
+    cp "$LAUNCHER_SRC" "$INSTALL_DIR/yaria-app"
+    chmod 755 "$INSTALL_DIR/yaria-app"
+    if [ -n "$DEPS_SRC" ]; then
+        cp "$DEPS_SRC" "$INSTALL_DIR/linux-deps.sh"
+        chmod 644 "$INSTALL_DIR/linux-deps.sh"
+    fi
+    ok "Launcher + binary installed: ${INSTALL_DIR}/yaria-app (+ yaria-app.bin)"
+else
+    # No launcher — install ELF as yaria-app directly
+    cp "$BINARY" "$INSTALL_DIR/yaria-app"
+    chmod 755 "$INSTALL_DIR/yaria-app"
+    ok "Binary installed: ${INSTALL_DIR}/yaria-app"
+fi
 
 # --- Ensure ~/.local/bin is in PATH ---
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
@@ -159,21 +201,73 @@ if command -v update-desktop-database &>/dev/null; then
 fi
 ok "Icons installed"
 
-# --- Check WebKitGTK ---
+# --- Check runtime dependencies ---
 echo ""
-info "Checking WebKitGTK..."
-if ldconfig -p 2>/dev/null | grep -q "libwebkit2gtk-4"; then
-    ok "WebKitGTK found"
-else
-    warn "WebKitGTK not detected. Yaria requires WebKitGTK to run."
-    echo ""
-    echo -e "  Install it with:"
-    echo -e "    ${CYAN}Arch:${NC}     sudo pacman -S webkit2gtk"
-    echo -e "    ${CYAN}Debian:${NC}   sudo apt install libwebkit2gtk-4.0-dev"
-    echo -e "    ${CYAN}Fedora:${NC}   sudo dnf install webkit2gtk4.0-devel"
-    echo -e "    ${CYAN}openSUSE:${NC} sudo zypper install libwebkit2gtk3-devel"
-    echo ""
+info "Checking runtime dependencies..."
+
+check_lib() {
+    local name="$1"
+    if ldconfig -p 2>/dev/null | grep -q "$name"; then
+        ok "$name found"
+        return 0
+    fi
+    warn "$name not detected"
+    return 1
+}
+
+check_cmd() {
+    local name="$1"
+    if command -v "$name" &>/dev/null; then
+        ok "$name found"
+        return 0
+    fi
+    warn "$name not found (optional — Yaria can auto-download most tools)"
+    return 1
+}
+
+# Shared multi-distro helpers (from extracted package — works with curl|bash)
+# Note: BASH_SOURCE is unbound when install.sh is piped to bash.
+if [ -f "$TMP_DIR/yaria-app/linux-deps.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$TMP_DIR/yaria-app/linux-deps.sh"
+elif [ -n "${BASH_SOURCE[0]+x}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/linux-deps.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$(dirname "${BASH_SOURCE[0]}")/linux-deps.sh"
 fi
+
+if command -v yaria_have_webkit >/dev/null 2>&1; then
+    if ! yaria_have_webkit; then
+        info "Installing WebKitGTK for your distro (one-time)…"
+        if yaria_install_webkit && yaria_have_webkit; then
+            ok "WebKitGTK installed"
+        else
+            warn "WebKitGTK still missing — launcher will prompt on first run"
+            yaria_webkit_install_help 2>/dev/null || true
+        fi
+    else
+        ok "WebKitGTK found"
+    fi
+else
+    if ! check_lib "libwebkit2gtk-4"; then
+        warn "WebKitGTK not detected — install libwebkit2gtk-4.1 via your package manager"
+    fi
+fi
+check_lib "libgtk-3" || true
+if ! check_lib "libmpv.so"; then
+    warn "libmpv not detected yet — optional; WebView player works; app tries auto-download"
+fi
+check_cmd "aria2c" || true
+check_cmd "ffmpeg" || true
+check_cmd "yt-dlp" || true
+
+echo ""
+echo -e "  ${YELLOW}Notes:${NC}"
+echo "    • Works on Arch, Ubuntu/Debian, Fedora, openSUSE, and most desktop Linux distros."
+echo "    • WebKitGTK is required for the UI (installer/launcher installs it if missing)."
+echo "    • Windows uses portable WebView2 runtime (usually preinstalled) + auto mpv.exe."
+echo "    • yt-dlp, aria2c, deno, ffmpeg auto-download into ~/.yaria/dependencies."
+echo "    • Native player (libmpv/mpv) is optional and auto-fetched per-distro when possible."
+echo ""
 
 # --- Done ---
 echo ""

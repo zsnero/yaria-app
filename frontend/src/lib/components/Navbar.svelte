@@ -5,7 +5,7 @@
   activeTab.subscribe(v => tab = v);
 
   function switchTab(t: 'yaria' | 'mantorex') {
-    navigate(t === 'yaria' ? '#/yaria' : '#/mantorex');
+    navigate(t === 'yaria' ? '#/yaria' : '#/local');
   }
 
   function goDownloads() {

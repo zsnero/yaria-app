@@ -212,14 +212,15 @@ func (s *SettingsService) GetSpeedLimit() int64 {
 func (s *SettingsService) GetUISettings() map[string]interface{} {
 	ui := appconfig.GetUISettings()
 	return map[string]interface{}{
-		"font":                     ui.Font,
-		"font_size":                ui.FontSize,
-		"scale":                    ui.Scale,
-		"animations":               ui.Animations,
-		"blur":                     ui.Blur,
-		"blur_set":                 appconfig.BlurIsSet(),
-		"player_backend":           ui.PlayerBackend,
-		"mantorex_legal_accepted":  ui.MantorexLegalAccepted,
+		"font":                    ui.Font,
+		"font_size":               ui.FontSize,
+		"scale":                   ui.Scale,
+		"animations":              ui.Animations,
+		"blur":                    ui.Blur,
+		"blur_set":                appconfig.BlurIsSet(),
+		"player_backend":          ui.PlayerBackend,
+		"startup_tab":             ui.StartupTab,
+		"mantorex_legal_accepted": ui.MantorexLegalAccepted,
 		// false until the user has saved UI prefs at least once
 		"configured": appconfig.UIConfigured(),
 	}
@@ -255,6 +256,13 @@ func (s *SettingsService) SaveUISettings(settings map[string]interface{}) map[st
 			ui.PlayerBackend = "libmpv"
 		} else {
 			ui.PlayerBackend = "webview"
+		}
+	}
+	if v, ok := settings["startup_tab"].(string); ok && v != "" {
+		if v == "mantorex" {
+			ui.StartupTab = "mantorex"
+		} else {
+			ui.StartupTab = "yaria"
 		}
 	}
 	if v, ok := settings["mantorex_legal_accepted"].(bool); ok {

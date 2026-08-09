@@ -51,6 +51,12 @@
   let playerBackendSaving = $state(false);
   let playerBackendMsg = $state('');
 
+  // App start tab
+  let startupTab = $state<'yaria' | 'mantorex'>(
+    localStorage.getItem('yaria_startup_tab') === 'mantorex' ? 'mantorex' : 'yaria'
+  );
+  let startupTabSaving = $state(false);
+
   // Font options
   const fontOptions = [
     { value: 'Roboto', label: 'Roboto (Default)' },
@@ -163,12 +169,27 @@
         api.mpv.available().catch(() => ({ available: false, reason: 'MpvService unavailable' })),
       ]);
       playerBackend = ui.player_backend === 'libmpv' ? 'libmpv' : 'webview';
+      startupTab = ui.startup_tab === 'mantorex' ? 'mantorex' : 'yaria';
+      try { localStorage.setItem('yaria_startup_tab', startupTab); } catch { /* ignore */ }
       mpvAvailable = !!av?.available;
       mpvReason = (av as any)?.reason || '';
     } catch {
       playerBackend = 'webview';
       mpvAvailable = false;
     }
+  }
+
+  async function setStartupTab(tab: 'yaria' | 'mantorex') {
+    startupTabSaving = true;
+    try {
+      startupTab = tab;
+      try { localStorage.setItem('yaria_startup_tab', tab); } catch { /* ignore */ }
+      await api.settings.saveUISettings({ startup_tab: tab });
+      toastSuccess('Startup tab saved');
+    } catch (e: any) {
+      toastError(e?.message || 'Failed to save');
+    }
+    startupTabSaving = false;
   }
 
   async function setPlayerBackend(backend: 'webview' | 'libmpv') {
@@ -188,7 +209,7 @@
           }
         }
         if (!mpvAvailable) {
-          playerBackendMsg = 'Could not install libmpv automatically. Install mpv via your package manager, then retry.';
+          playerBackendMsg = 'Could not install native player automatically. WebView still works. Optional: sudo pacman -S mpv';
           toastError(playerBackendMsg);
           playerBackendSaving = false;
           return;
@@ -621,6 +642,34 @@
     </label>
     <div class="reset-row">
       <button class="btn btn-ghost btn-sm reset-btn" onclick={resetUIDefaults}>Reset to Defaults</button>
+    </div>
+  </div>
+
+  <!-- Startup tab -->
+  <div class="setting-group">
+    <div class="setting-label">Open on startup</div>
+    <div class="setting-desc">
+      Which main tab to show when the app launches. Deep links and the last page from the same session are not overridden.
+    </div>
+    <div class="player-backend-row">
+      <button
+        class="btn btn-sm"
+        class:btn-primary={startupTab === 'yaria'}
+        class:btn-ghost={startupTab !== 'yaria'}
+        onclick={() => setStartupTab('yaria')}
+        disabled={startupTabSaving}
+      >
+        Yaria
+      </button>
+      <button
+        class="btn btn-sm"
+        class:btn-primary={startupTab === 'mantorex'}
+        class:btn-ghost={startupTab !== 'mantorex'}
+        onclick={() => setStartupTab('mantorex')}
+        disabled={startupTabSaving}
+      >
+        Mantorex (Local)
+      </button>
     </div>
   </div>
 

@@ -3,17 +3,24 @@
 package main
 
 /*
-#cgo pkg-config: mpv x11
+#cgo pkg-config: x11
+#cgo LDFLAGS: -ldl -lX11
 #include <mpv/client.h>
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
+#include <dlfcn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-static inline int mpv_set_wid(mpv_handle *h, int64_t wid) {
-	return mpv_set_property(h, "wid", MPV_FORMAT_INT64, &wid);
+// --- X11 helpers (unchanged) ---
+
+// Forward decl — defined after function pointers below
+static int (*p_mpv_set_property)(mpv_handle*, const char*, mpv_format, void*);
+
+static inline int yaria_mpv_set_wid(mpv_handle *h, int64_t wid) {
+	return p_mpv_set_property(h, "wid", MPV_FORMAT_INT64, &wid);
 }
 
 static Window find_named_window(Display *dpy, Window root, const char *needle) {
@@ -43,7 +50,6 @@ static Window find_named_window(Display *dpy, Window root, const char *needle) {
 				}
 				XFree(name);
 			}
-			// Fallback WM_NAME
 			char *wm = NULL;
 			if (XFetchName(dpy, wins[i], &wm) && wm) {
 				if (strstr(wm, needle) != NULL) {
@@ -93,13 +99,85 @@ static void set_mapped(Display *dpy, Window win, int show) {
 	else XUnmapWindow(dpy, win);
 	XFlush(dpy);
 }
+
+// --- Runtime libmpv via dlopen (no DT_NEEDED — app starts without system mpv) ---
+
+static void *yaria_libmpv;
+
+static mpv_handle *(*p_mpv_create)(void);
+static int (*p_mpv_initialize)(mpv_handle*);
+static void (*p_mpv_destroy)(mpv_handle*);
+static void (*p_mpv_terminate_destroy)(mpv_handle*);
+static int (*p_mpv_set_option_string)(mpv_handle*, const char*, const char*);
+// p_mpv_set_property declared above (used by yaria_mpv_set_wid)
+static int (*p_mpv_get_property)(mpv_handle*, const char*, mpv_format, void*);
+static int (*p_mpv_command)(mpv_handle*, const char**);
+static const char *(*p_mpv_error_string)(int);
+static mpv_event *(*p_mpv_wait_event)(mpv_handle*, double);
+
+static int yaria_bind_sym(void **dst, const char *name) {
+	*dst = dlsym(yaria_libmpv, name);
+	return *dst ? 0 : -1;
+}
+
+// Load libmpv from path (or default soname if path is NULL/empty).
+// Returns 0 on success; on failure sets *err_out via dlerror (caller frees with free()).
+int yaria_load_libmpv(const char *path, char **err_out) {
+	if (yaria_libmpv) return 0;
+	const char *try_path = (path && path[0]) ? path : "libmpv.so.2";
+	yaria_libmpv = dlopen(try_path, RTLD_NOW | RTLD_GLOBAL);
+	if (!yaria_libmpv && path && path[0]) {
+		yaria_libmpv = dlopen("libmpv.so.2", RTLD_NOW | RTLD_GLOBAL);
+	}
+	if (!yaria_libmpv) {
+		yaria_libmpv = dlopen("libmpv.so", RTLD_NOW | RTLD_GLOBAL);
+	}
+	if (!yaria_libmpv) {
+		if (err_out) {
+			const char *e = dlerror();
+			*err_out = e ? strdup(e) : strdup("dlopen libmpv failed");
+		}
+		return -1;
+	}
+	if (yaria_bind_sym((void**)&p_mpv_create, "mpv_create") ||
+		yaria_bind_sym((void**)&p_mpv_initialize, "mpv_initialize") ||
+		yaria_bind_sym((void**)&p_mpv_destroy, "mpv_destroy") ||
+		yaria_bind_sym((void**)&p_mpv_terminate_destroy, "mpv_terminate_destroy") ||
+		yaria_bind_sym((void**)&p_mpv_set_option_string, "mpv_set_option_string") ||
+		yaria_bind_sym((void**)&p_mpv_set_property, "mpv_set_property") ||
+		yaria_bind_sym((void**)&p_mpv_get_property, "mpv_get_property") ||
+		yaria_bind_sym((void**)&p_mpv_command, "mpv_command") ||
+		yaria_bind_sym((void**)&p_mpv_error_string, "mpv_error_string") ||
+		yaria_bind_sym((void**)&p_mpv_wait_event, "mpv_wait_event")) {
+		if (err_out) *err_out = strdup("libmpv missing required symbols");
+		dlclose(yaria_libmpv);
+		yaria_libmpv = NULL;
+		return -1;
+	}
+	return 0;
+}
+
+int yaria_libmpv_loaded(void) { return yaria_libmpv != NULL; }
+
+// Thin wrappers so Go can call through function pointers
+mpv_handle *y_mpv_create(void) { return p_mpv_create(); }
+int y_mpv_initialize(mpv_handle *h) { return p_mpv_initialize(h); }
+void y_mpv_destroy(mpv_handle *h) { p_mpv_destroy(h); }
+void y_mpv_terminate_destroy(mpv_handle *h) { p_mpv_terminate_destroy(h); }
+int y_mpv_set_option_string(mpv_handle *h, const char *k, const char *v) { return p_mpv_set_option_string(h, k, v); }
+int y_mpv_set_property(mpv_handle *h, const char *name, mpv_format fmt, void *data) { return p_mpv_set_property(h, name, fmt, data); }
+int y_mpv_get_property(mpv_handle *h, const char *name, mpv_format fmt, void *data) { return p_mpv_get_property(h, name, fmt, data); }
+int y_mpv_command(mpv_handle *h, const char **args) { return p_mpv_command(h, args); }
+const char *y_mpv_error_string(int code) { return p_mpv_error_string(code); }
+mpv_event *y_mpv_wait_event(mpv_handle *h, double timeout) { return p_mpv_wait_event(h, timeout); }
 */
 import "C"
 
 import (
 	"context"
 	"fmt"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -109,8 +187,6 @@ import (
 )
 
 var (
-	mpvOnce     sync.Once
-	mpvInitErr  error
 	mpvHandle   *C.mpv_handle
 	mpvDisplay  *C.Display
 	mpvParent   C.Window
@@ -118,7 +194,99 @@ var (
 	mpvCtx      context.Context
 	mpvEventRun bool
 	mpvLastB    struct{ x, y, w, h int }
+	mpvLoadMu   sync.Mutex
+	mpvLoadErr  error
+	mpvLoaded   bool
 )
+
+// ensureLibmpvLoaded dlopens system or bundled libmpv. Never links at process start.
+func ensureLibmpvLoaded() error {
+	mpvLoadMu.Lock()
+	defer mpvLoadMu.Unlock()
+	if mpvLoaded {
+		return mpvLoadErr
+	}
+	mpvLoaded = true
+
+	deps := NewDepsService()
+	// Prefer bundled libs for dlopen resolution of NEEDED entries
+	if deps != nil && deps.depsDir != "" {
+		prev := os.Getenv("LD_LIBRARY_PATH")
+		joined := deps.depsDir
+		if prev != "" {
+			joined = deps.depsDir + string(os.PathListSeparator) + prev
+		}
+		_ = os.Setenv("LD_LIBRARY_PATH", joined)
+	}
+
+	candidates := []string{}
+	if deps != nil {
+		if p, ok := deps.MpvLibPath(); ok {
+			candidates = append(candidates, p)
+		}
+		for _, name := range []string{"libmpv.so.2", "libmpv.so", "libmpv.so.1"} {
+			candidates = append(candidates, filepath.Join(deps.depsDir, name))
+		}
+	}
+	candidates = append(candidates,
+		"libmpv.so.2",
+		"/usr/lib/libmpv.so.2",
+		"/usr/lib64/libmpv.so.2",
+		"/usr/lib/x86_64-linux-gnu/libmpv.so.2",
+		"/usr/lib/aarch64-linux-gnu/libmpv.so.2",
+		"libmpv.so",
+	)
+
+	var lastErr string
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		// Skip missing files for absolute paths
+		if strings.Contains(c, "/") {
+			if st, err := os.Stat(c); err != nil || st.IsDir() {
+				continue
+			}
+		}
+		cs := C.CString(c)
+		var cerr *C.char
+		ret := C.yaria_load_libmpv(cs, &cerr)
+		C.free(unsafe.Pointer(cs))
+		if ret == 0 {
+			mpvLoadErr = nil
+			return nil
+		}
+		if cerr != nil {
+			lastErr = C.GoString(cerr)
+			C.free(unsafe.Pointer(cerr))
+		}
+	}
+
+	// Last resort: trigger auto-download then retry once
+	if deps != nil {
+		deps.downloadMpv()
+		if p, ok := deps.MpvLibPath(); ok {
+			cs := C.CString(p)
+			var cerr *C.char
+			ret := C.yaria_load_libmpv(cs, &cerr)
+			C.free(unsafe.Pointer(cs))
+			if ret == 0 {
+				mpvLoadErr = nil
+				return nil
+			}
+			if cerr != nil {
+				lastErr = C.GoString(cerr)
+				C.free(unsafe.Pointer(cerr))
+			}
+		}
+	}
+
+	if lastErr == "" {
+		lastErr = "libmpv not found"
+	}
+	mpvLoadErr = fmt.Errorf("%s (auto-setup failed — install mpv or retry online)", lastErr)
+	return mpvLoadErr
+}
 
 func mpvPlatformAvailable() (bool, string) {
 	dpy := C.XOpenDisplay(nil)
@@ -127,23 +295,40 @@ func mpvPlatformAvailable() (bool, string) {
 	}
 	C.XCloseDisplay(dpy)
 
-	// System or bundled libmpv/mpv (auto-downloaded into dependencies/)
+	if C.yaria_libmpv_loaded() != 0 {
+		return true, "libmpv loaded"
+	}
 	if deps := NewDepsService(); deps != nil {
-		if p, ok := deps.MpvLibOrBinary(); ok {
+		if p, ok := deps.MpvLibPath(); ok {
 			return true, "using " + p
 		}
+		if p, ok := deps.MpvLibOrBinary(); ok {
+			// binary alone isn't enough for embed, but download may have lib
+			if strings.Contains(p, "libmpv") {
+				return true, "using " + p
+			}
+		}
 	}
-	if _, err := exec.LookPath("mpv"); err == nil {
-		return true, ""
+	// Probe without caching failure (download may still be in progress)
+	for _, p := range []string{
+		"/usr/lib/libmpv.so.2", "/usr/lib64/libmpv.so.2",
+		"/usr/lib/x86_64-linux-gnu/libmpv.so.2",
+		"/usr/lib/aarch64-linux-gnu/libmpv.so.2",
+	} {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return true, "system " + p
+		}
 	}
-	// CGO is linked against libmpv — if we got this far the DSO loaded at process start
-	return true, ""
+	return false, "libmpv not installed yet — Yaria will auto-download it on first setup"
 }
 
 func mpvPlatformStart(ctx context.Context) error {
 	mpvCtx = ctx
 	if mpvHandle != nil {
 		return nil
+	}
+	if err := ensureLibmpvLoaded(); err != nil {
+		return err
 	}
 
 	dpy := C.XOpenDisplay(nil)
@@ -153,7 +338,6 @@ func mpvPlatformStart(ctx context.Context) error {
 	mpvDisplay = dpy
 	root := C.XDefaultRootWindow(dpy)
 
-	// Find Yaria main window by title
 	name := C.CString("Yaria")
 	defer C.free(unsafe.Pointer(name))
 	parent := C.find_named_window(dpy, root, name)
@@ -164,7 +348,6 @@ func mpvPlatformStart(ctx context.Context) error {
 	}
 	mpvParent = parent
 
-	// Placeholder child; real size comes from SetBounds
 	mpvChild = C.create_child(dpy, parent, 0, 0, 16, 16)
 	if mpvChild == 0 {
 		C.XCloseDisplay(dpy)
@@ -172,7 +355,7 @@ func mpvPlatformStart(ctx context.Context) error {
 		return fmt.Errorf("failed to create child window")
 	}
 
-	h := C.mpv_create()
+	h := C.y_mpv_create()
 	if h == nil {
 		C.XDestroyWindow(dpy, mpvChild)
 		C.XCloseDisplay(dpy)
@@ -181,9 +364,8 @@ func mpvPlatformStart(ctx context.Context) error {
 		return fmt.Errorf("mpv_create failed")
 	}
 
-	// Embed into child
-	if C.mpv_set_wid(h, C.int64_t(mpvChild)) != 0 {
-		C.mpv_destroy(h)
+	if C.yaria_mpv_set_wid(h, C.int64_t(mpvChild)) != 0 {
+		C.y_mpv_destroy(h)
 		C.XDestroyWindow(dpy, mpvChild)
 		C.XCloseDisplay(dpy)
 		mpvChild = 0
@@ -191,10 +373,9 @@ func mpvPlatformStart(ctx context.Context) error {
 		return fmt.Errorf("failed to set mpv wid")
 	}
 
-	// Reasonable defaults
 	setOpt := func(k, v string) {
 		ck, cv := C.CString(k), C.CString(v)
-		C.mpv_set_option_string(h, ck, cv)
+		C.y_mpv_set_option_string(h, ck, cv)
 		C.free(unsafe.Pointer(ck))
 		C.free(unsafe.Pointer(cv))
 	}
@@ -207,8 +388,8 @@ func mpvPlatformStart(ctx context.Context) error {
 	setOpt("input-vo-keyboard", "no")
 	setOpt("cursor-autohide", "always")
 
-	if C.mpv_initialize(h) < 0 {
-		C.mpv_destroy(h)
+	if C.y_mpv_initialize(h) < 0 {
+		C.y_mpv_destroy(h)
 		C.XDestroyWindow(dpy, mpvChild)
 		C.XCloseDisplay(dpy)
 		mpvChild = 0
@@ -224,7 +405,7 @@ func mpvPlatformStart(ctx context.Context) error {
 
 func mpvEventLoop() {
 	for mpvEventRun && mpvHandle != nil {
-		ev := C.mpv_wait_event(mpvHandle, 0.25)
+		ev := C.y_mpv_wait_event(mpvHandle, 0.25)
 		if ev == nil {
 			continue
 		}
@@ -236,9 +417,7 @@ func mpvEventLoop() {
 				wailsRuntime.EventsEmit(mpvCtx, "mpv-eof", map[string]interface{}{})
 			}
 		case C.MPV_EVENT_PROPERTY_CHANGE, C.MPV_EVENT_PLAYBACK_RESTART:
-			// periodic time updates via poll below
 		}
-		// Also emit time periodically
 		if mpvCtx != nil && mpvHandle != nil {
 			t := mpvPlatformGetTime()
 			d := mpvPlatformGetDuration()
@@ -259,9 +438,6 @@ func mpvPlatformLoad(pathOrURL string) error {
 	}
 	cpath := C.CString(pathOrURL)
 	defer C.free(unsafe.Pointer(cpath))
-	// mpv_command: loadfile <url> replace
-	cmd := "**\x00"
-	_ = cmd
 	args := []*C.char{
 		C.CString("loadfile"),
 		cpath,
@@ -270,12 +446,10 @@ func mpvPlatformLoad(pathOrURL string) error {
 	}
 	defer C.free(unsafe.Pointer(args[0]))
 	defer C.free(unsafe.Pointer(args[2]))
-	// loadfile keeps path alive until command returns
-	ret := C.mpv_command(mpvHandle, &args[0])
+	ret := C.y_mpv_command(mpvHandle, &args[0])
 	if ret < 0 {
-		return fmt.Errorf("loadfile failed: %s", C.GoString(C.mpv_error_string(ret)))
+		return fmt.Errorf("loadfile failed: %s", C.GoString(C.y_mpv_error_string(ret)))
 	}
-	// Observe nothing extra; event loop polls time
 	_ = time.Now()
 	return nil
 }
@@ -320,7 +494,7 @@ func mpvPlatformSetPause(pause bool) error {
 	}
 	ck := C.CString("pause")
 	defer C.free(unsafe.Pointer(ck))
-	return mpvRet(C.mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_FLAG, unsafe.Pointer(&flag)))
+	return mpvRet(C.y_mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_FLAG, unsafe.Pointer(&flag)))
 }
 
 func mpvPlatformTogglePause() error {
@@ -332,14 +506,13 @@ func mpvPlatformTogglePause() error {
 	defer C.free(unsafe.Pointer(ck))
 	defer C.free(unsafe.Pointer(cv))
 	args := []*C.char{ck, cv, nil}
-	return mpvRet(C.mpv_command(mpvHandle, &args[0]))
+	return mpvRet(C.y_mpv_command(mpvHandle, &args[0]))
 }
 
 func mpvPlatformSeek(seconds float64) error {
 	if mpvHandle == nil {
 		return fmt.Errorf("mpv not started")
 	}
-	// seek absolute
 	ck := C.CString("seek")
 	cv := C.CString(fmt.Sprintf("%f", seconds))
 	abs := C.CString("absolute")
@@ -347,7 +520,7 @@ func mpvPlatformSeek(seconds float64) error {
 	defer C.free(unsafe.Pointer(cv))
 	defer C.free(unsafe.Pointer(abs))
 	args := []*C.char{ck, cv, abs, nil}
-	return mpvRet(C.mpv_command(mpvHandle, &args[0]))
+	return mpvRet(C.y_mpv_command(mpvHandle, &args[0]))
 }
 
 func mpvPlatformSetVolume(vol float64) error {
@@ -363,7 +536,7 @@ func mpvPlatformSetVolume(vol float64) error {
 	v := C.double(vol)
 	ck := C.CString("volume")
 	defer C.free(unsafe.Pointer(ck))
-	return mpvRet(C.mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_DOUBLE, unsafe.Pointer(&v)))
+	return mpvRet(C.y_mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_DOUBLE, unsafe.Pointer(&v)))
 }
 
 func mpvPlatformGetTime() float64 {
@@ -373,7 +546,7 @@ func mpvPlatformGetTime() float64 {
 	var v C.double
 	ck := C.CString("time-pos")
 	defer C.free(unsafe.Pointer(ck))
-	if C.mpv_get_property(mpvHandle, ck, C.MPV_FORMAT_DOUBLE, unsafe.Pointer(&v)) < 0 {
+	if C.y_mpv_get_property(mpvHandle, ck, C.MPV_FORMAT_DOUBLE, unsafe.Pointer(&v)) < 0 {
 		return 0
 	}
 	return float64(v)
@@ -386,7 +559,7 @@ func mpvPlatformGetDuration() float64 {
 	var v C.double
 	ck := C.CString("duration")
 	defer C.free(unsafe.Pointer(ck))
-	if C.mpv_get_property(mpvHandle, ck, C.MPV_FORMAT_DOUBLE, unsafe.Pointer(&v)) < 0 {
+	if C.y_mpv_get_property(mpvHandle, ck, C.MPV_FORMAT_DOUBLE, unsafe.Pointer(&v)) < 0 {
 		return 0
 	}
 	return float64(v)
@@ -399,7 +572,7 @@ func mpvPlatformIsPaused() bool {
 	var flag C.int
 	ck := C.CString("pause")
 	defer C.free(unsafe.Pointer(ck))
-	if C.mpv_get_property(mpvHandle, ck, C.MPV_FORMAT_FLAG, unsafe.Pointer(&flag)) < 0 {
+	if C.y_mpv_get_property(mpvHandle, ck, C.MPV_FORMAT_FLAG, unsafe.Pointer(&flag)) < 0 {
 		return true
 	}
 	return flag != 0
@@ -408,7 +581,7 @@ func mpvPlatformIsPaused() bool {
 func mpvPlatformStop() {
 	mpvEventRun = false
 	if mpvHandle != nil {
-		C.mpv_terminate_destroy(mpvHandle)
+		C.y_mpv_terminate_destroy(mpvHandle)
 		mpvHandle = nil
 	}
 	if mpvDisplay != nil {
@@ -427,5 +600,5 @@ func mpvRet(code C.int) error {
 	if code >= 0 {
 		return nil
 	}
-	return fmt.Errorf("%s", C.GoString(C.mpv_error_string(code)))
+	return fmt.Errorf("%s", C.GoString(C.y_mpv_error_string(code)))
 }

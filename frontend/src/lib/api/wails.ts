@@ -80,6 +80,7 @@ export const settings = {
     blur_set?: boolean;
     configured?: boolean;
     player_backend?: string;
+    startup_tab?: string;
     mantorex_legal_accepted?: boolean;
   }> => call(() => wails().SettingsService.GetUISettings()),
   saveUISettings: (settings: {
@@ -89,6 +90,7 @@ export const settings = {
     animations?: boolean;
     blur?: boolean;
     player_backend?: string;
+    startup_tab?: string;
     mantorex_legal_accepted?: boolean;
   }): Promise<any> => call(() => wails().SettingsService.SaveUISettings(settings)),
 };

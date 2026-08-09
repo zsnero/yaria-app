@@ -18,7 +18,7 @@ export const currentStreamID = writable<number | null>(null);
 export const currentMagnet = writable<string | null>(null);
 
 // Mantorex mode: 'local' | 'remote' | 'torrents'
-export const mantorexMode = writable<'local' | 'remote' | 'torrents'>('torrents');
+export const mantorexMode = writable<'local' | 'remote' | 'torrents'>('local');
 
 function defaultBlur(): boolean {
   // Blur OFF by default on Linux (WebKitGTK glitches), ON elsewhere
@@ -117,9 +117,14 @@ export async function loadUISettingsFromDisk(): Promise<void> {
     const res = await api.settings.getUISettings() as any;
     if (!res || res.error) return;
 
-    // First run after upgrade: migrate localStorage → disk
+    // First run after upgrade: migrate localStorage → disk with factory defaults
     if (!res.configured) {
-      const local = readLocalUI();
+      const local = {
+        ...readLocalUI(),
+        // Enforce first-run defaults when nothing was ever saved
+        font: 'Roboto',
+        animations: false,
+      };
       writeLocalUI(local);
       applyToDOM(local);
       try {
@@ -144,6 +149,10 @@ export async function loadUISettingsFromDisk(): Promise<void> {
 
     writeLocalUI(settings);
     applyToDOM(settings);
+    try {
+      const tab = (res as any).startup_tab === 'mantorex' ? 'mantorex' : 'yaria';
+      localStorage.setItem('yaria_startup_tab', tab);
+    } catch { /* ignore */ }
   } catch {
     // Backend not ready — keep localStorage values
   }

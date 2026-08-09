@@ -77,6 +77,29 @@
     ModeSwitcher = await loadComponent(proCompGlob, './lib/components/ModeSwitcher.svelte');
   }
 
+  /** On first paint only: empty / default hash → user-chosen startup tab */
+  function applyStartupTabIfNeeded() {
+    const raw = (window.location.hash || '').trim();
+    const isDefault =
+      raw === '' ||
+      raw === '#' ||
+      raw === '#/' ||
+      raw === '#/yaria' ||
+      raw === '#/yaria/';
+    if (!isDefault) return;
+    let tab = 'yaria';
+    try {
+      tab = localStorage.getItem('yaria_startup_tab') || 'yaria';
+    } catch { /* ignore */ }
+    // Prefer disk-backed value when already loaded this session
+    // (loadUISettingsFromDisk may have updated localStorage)
+    if (tab === 'mantorex') {
+      window.location.hash = '#/local';
+    } else if (raw === '' || raw === '#' || raw === '#/') {
+      window.location.hash = '#/yaria';
+    }
+  }
+
   function handleHashChange() {
     const hash = window.location.hash || '#/yaria';
     const [path, queryStr] = hash.substring(1).split('?');
@@ -164,12 +187,40 @@
   let setupName = $state('');
   let setupDone = $state(false);
   let setupError = $state('');
+  /** Only true after a real download/extract started — prevents "Ready" on every launch */
+  let setupHadWork = $state(false);
   let setupCleanups: (() => void)[] = [];
 
+  function markSetupWork(name: string, message: string, percent?: number) {
+    setupHadWork = true;
+    setupVisible = true;
+    setupDone = false;
+    setupError = '';
+    if (name) setupName = name;
+    if (message) setupMessage = message;
+    if (percent != null && percent > setupPercent) setupPercent = percent;
+  }
+
+  function finishSetup(message?: string) {
+    if (!setupHadWork || !setupVisible) {
+      setupVisible = false;
+      return;
+    }
+    setupDone = true;
+    setupPercent = 100;
+    if (message) setupMessage = message;
+    setTimeout(() => {
+      setupVisible = false;
+      setupHadWork = false;
+    }, 2000);
+  }
+
   onMount(async () => {
-    handleHashChange();
     applyUISettings();
     await loadUISettingsFromDisk();
+    // Cold start: honor preferred startup tab when no real route is in the hash
+    applyStartupTabIfNeeded();
+    handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
 
     await loadProModules();
@@ -186,80 +237,82 @@
     await loadMantorexLegal();
     mantorexLegalChecked = true;
 
-    // Only show banner when something is actually installing (not on every launch)
+    // Banner ONLY when real install work happens (never on idle "already ready" launches)
     setupCleanups.push(api.events.on('setup-progress', (data: any) => {
       if (!data) return;
-      // Ignore silent no-op completions
-      if (data.done && !setupVisible) return;
-      if (data.phase === 'start' || data.phase === 'install') {
-        setupVisible = true;
+      const phase = String(data.phase || '');
+      const msg = String(data.message || '').toLowerCase();
+      // Backend stays silent when nothing to install; still ignore soft "already" lines
+      if (msg.includes('already') && !setupHadWork) return;
+      if (phase === 'install' || phase === 'start') {
+        // "start" alone is not enough — require install phase or active download wording
+        if (phase === 'install' || msg.includes('download') || msg.includes('extract') || msg.includes('setting up missing')) {
+          markSetupWork(data.name || '', data.message || '', Number(data.percent) || 0);
+        }
       }
-      if (!setupVisible && !data.done) setupVisible = true;
-      setupMessage = data.message || '';
-      setupPercent = Number(data.percent) || 0;
-      setupName = data.name || '';
-      setupDone = !!data.done;
+      if (!setupHadWork) return;
+      if (data.message) setupMessage = data.message;
+      if (data.name) setupName = data.name;
+      if (data.percent != null) setupPercent = Number(data.percent) || setupPercent;
       setupError = data.error || '';
-      if (data.done && setupVisible) {
-        setTimeout(() => { setupVisible = false; }, 2200);
-      }
+      if (data.done) finishSetup(data.message || 'Setup complete');
     }));
     setupCleanups.push(api.events.on('deps-install-progress', (data: any) => {
       if (!data) return;
-      // Only surface real download/extract activity
-      const st = data.status || '';
-      if (st === 'complete' && !setupVisible) return;
-      if (st === 'downloading' || st === 'extracting' || st === 'error') {
+      const st = String(data.status || '');
+      const msg = String(data.message || '').toLowerCase();
+      if (st === 'complete' && (msg.includes('already') || !setupHadWork)) return;
+      if (st === 'downloading' || st === 'extracting') {
+        markSetupWork(data.name || '', data.message || '', Number(data.percent) || 0);
+      } else if (st === 'error' && setupHadWork) {
+        const name = String(data.name || '').toLowerCase();
+        // libmpv is optional — never pin a red "Setup issue" for it
+        if (name.includes('mpv') || msg.includes('libmpv') || msg.includes('native player') || msg.includes('optional')) {
+          finishSetup('Native player optional — using WebView');
+          return;
+        }
         setupVisible = true;
-      }
-      if (!setupVisible) return;
-      setupName = data.name || setupName;
-      setupMessage = data.message || setupMessage;
-      if (data.percent != null) setupPercent = Number(data.percent) || setupPercent;
-      if (st === 'error') setupError = data.message || 'Install failed';
-      if (st === 'complete') {
-        setupMessage = data.message || 'Installed';
-        setupPercent = 100;
-        setTimeout(() => { setupVisible = false; }, 2200);
+        setupError = data.message || 'Install failed';
+        setupMessage = data.message || setupMessage;
+      } else if (st === 'complete' && setupHadWork) {
+        const doneMsg = String(data.message || '');
+        if (doneMsg.toLowerCase().includes('skipped (optional)')) {
+          finishSetup('Ready (WebView player)');
+        } else {
+          finishSetup(doneMsg || 'Installed');
+        }
       }
     }));
-    // yt-dlp first-time lines only (ignore tips / already-installed noise)
     setupCleanups.push(api.events.on('deps-progress', (data: any) => {
-      if (!data?.message || setupDone) return;
+      if (!data?.message) return;
       const msg = String(data.message);
       const low = msg.toLowerCase();
-      // Skip manual-install tips and optional warnings that are not real progress
       if (low.includes('you can install it manually') ||
           low.includes('skipping') ||
           low.includes('not available') ||
           low.includes('warning:') ||
           low.includes('npm not found') ||
-          low.includes('webtorrent')) {
+          low.includes('webtorrent') ||
+          low.includes('already') ||
+          low.includes('found yt-dlp') ||
+          low.includes('ready')) {
         return;
       }
-      // Only show when actually downloading/installing tools
-      if (!low.includes('download') && !low.includes('installing') && !low.includes('extract') && !low.includes('fetch')) {
+      // Strict: only active fetch/install lines
+      if (!(low.includes('downloading') || low.startsWith('installing') || low.includes('extracting') || low.includes('fetching'))) {
         return;
       }
-      setupVisible = true;
-      setupName = 'yt-dlp';
-      setupMessage = msg;
-      // Fake modest progress so we don't sit at 0% on text-only lines
-      if (setupPercent < 15) setupPercent = 15;
+      markSetupWork('yt-dlp', msg, Math.max(setupPercent, 20));
     }));
     setupCleanups.push(api.events.on('deps-ready', () => {
-      if (setupVisible && !setupError) {
-        setupDone = true;
-        setupPercent = 100;
-        setupMessage = 'Download tools ready';
-        setTimeout(() => { setupVisible = false; }, 1800);
-      }
+      // Never open the banner here — only close if we were actually installing
+      if (setupHadWork) finishSetup('Download tools ready');
     }));
     setupCleanups.push(api.events.on('deps-error', (data: any) => {
-      // Don't pin the banner on optional tool failures
       const err = String(data?.error || '');
       if (err.toLowerCase().includes('webtorrent')) return;
-      if (setupVisible) {
+      if (setupHadWork) {
+        setupVisible = true;
         setupError = err || 'Setup failed';
       }
     }));
