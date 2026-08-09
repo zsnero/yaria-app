@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	AppVersion    = "2.3.26"
+	AppVersion    = "2.3.27"
 	UpdateBaseURL = "https://yaria.live/download"
 )
 
@@ -213,9 +213,17 @@ func (u *UpdaterService) runUpdate() {
 	}
 	currentBin, _ = filepath.EvalSymlinks(currentBin)
 
-	if err := installUpdateBinary(newBinary, currentBin); err != nil {
-		u.setStatus(0, "Failed to install: "+err.Error())
-		return
+	// Linux launcher layout: real binary is yaria-app.bin next to shell yaria-app
+	if runtime.GOOS == "linux" {
+		if err := installLinuxUpdatePackage(tmpDir, newBinary, currentBin); err != nil {
+			u.setStatus(0, "Failed to install: "+err.Error())
+			return
+		}
+	} else {
+		if err := installUpdateBinary(newBinary, currentBin); err != nil {
+			u.setStatus(0, "Failed to install: "+err.Error())
+			return
+		}
 	}
 
 	u.setStatus(100, "Update complete! Restart the app to use the new version.")
@@ -226,25 +234,94 @@ func (u *UpdaterService) runUpdate() {
 }
 
 // findUpdateBinary locates the app binary inside an extracted update package.
+// Prefers yaria-app.bin (ELF) over the shell launcher named yaria-app.
 func findUpdateBinary(root string) string {
-	names := map[string]bool{
-		"yaria-app":     true,
-		"YariaApp":      true,
-		"yaria-app.exe": true,
-		"YariaApp.exe":  true,
-	}
-	var found string
+	preferred := []string{"yaria-app.bin", "yaria-app.exe", "YariaApp.exe", "YariaApp", "yaria-app"}
+	found := map[string]string{}
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		if names[info.Name()] {
-			found = path
-			return filepath.SkipAll
+		name := info.Name()
+		for _, p := range preferred {
+			if name == p {
+				// Skip shell scripts mistakenly named like the app
+				if isProbablyShellScript(path) && !strings.HasSuffix(strings.ToLower(name), ".exe") {
+					return nil
+				}
+				found[name] = path
+			}
 		}
 		return nil
 	})
-	return found
+	for _, p := range preferred {
+		if path, ok := found[p]; ok {
+			return path
+		}
+	}
+	return ""
+}
+
+func isProbablyShellScript(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 2)
+	n, _ := f.Read(buf)
+	return n >= 2 && buf[0] == '#' && buf[1] == '!'
+}
+
+// installLinuxUpdatePackage installs ELF as yaria-app.bin and refreshes the launcher.
+func installLinuxUpdatePackage(extractRoot, newBinary, currentBin string) error {
+	dir := filepath.Dir(currentBin)
+	// If we're running the ELF (.bin) or a bare binary in ~/.local/bin
+	targetBin := currentBin
+	if strings.HasSuffix(currentBin, ".bin") {
+		targetBin = currentBin
+	} else if filepath.Base(currentBin) == "yaria-app" {
+		// Prefer dedicated .bin path next to launcher
+		targetBin = filepath.Join(dir, "yaria-app.bin")
+	}
+
+	if err := installUpdateBinary(newBinary, targetBin); err != nil {
+		// Fallback: replace current path
+		if err2 := installUpdateBinary(newBinary, currentBin); err2 != nil {
+			return err
+		}
+		targetBin = currentBin
+	}
+
+	// Refresh launcher + deps helper from package when present
+	var launcherSrc, depsSrc string
+	filepath.Walk(extractRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		switch info.Name() {
+		case "yaria-launcher.sh":
+			launcherSrc = path
+		case "linux-deps.sh":
+			depsSrc = path
+		}
+		return nil
+	})
+	launcherDst := filepath.Join(filepath.Dir(targetBin), "yaria-app")
+	if launcherSrc != "" {
+		_ = copyFileForUpdate(launcherSrc, launcherDst)
+		_ = os.Chmod(launcherDst, 0755)
+	}
+	if depsSrc != "" {
+		_ = copyFileForUpdate(depsSrc, filepath.Join(filepath.Dir(targetBin), "linux-deps.sh"))
+	}
+	// Ensure .bin exists if we only updated launcher path historically
+	if targetBin != currentBin && filepath.Base(currentBin) == "yaria-app" && !isProbablyShellScript(currentBin) {
+		// current was a real ELF named yaria-app — keep a copy as .bin too
+		_ = copyFileForUpdate(newBinary, filepath.Join(dir, "yaria-app.bin"))
+		_ = os.Chmod(filepath.Join(dir, "yaria-app.bin"), 0755)
+	}
+	return nil
 }
 
 // installUpdateBinary replaces the running binary, with platform-specific fallbacks.
