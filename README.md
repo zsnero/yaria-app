@@ -11,9 +11,9 @@
 </p>
 
 <p align="center">
-  <a href="https://yaria.live"><img src="https://img.shields.io/badge/🌐_Website-yaria.live-8b6cef?style=for-the-badge" alt="Website" /></a>
-  <a href="https://yaria.live/download"><img src="https://img.shields.io/badge/⬇_Download-Free-34d399?style=for-the-badge" alt="Download" /></a>
-  <a href="https://yaria.live/docs"><img src="https://img.shields.io/badge/📖_Docs-Guide-6366f1?style=for-the-badge" alt="Docs" /></a>
+  <a href="https://yaria.live"><img src="https://img.shields.io/badge/website-yaria.live-8b6cef?style=for-the-badge" alt="Website" /></a>
+  <a href="https://yaria.live/download"><img src="https://img.shields.io/badge/download-free-34d399?style=for-the-badge" alt="Download" /></a>
+  <a href="https://yaria.live/docs"><img src="https://img.shields.io/badge/docs-guide-6366f1?style=for-the-badge" alt="Docs" /></a>
 </p>
 
 <p align="center">
@@ -58,9 +58,11 @@ yaria-app
 ```
 
 Installs to `~/.local/bin` + desktop entry.  
-First run may ask once for permission to install **WebKitGTK** if missing.
+The **app** lives in your home folder; if **WebKitGTK** is missing, you may be asked for your password **once** so the system can install it.
 
-If `yaria-app` is not found, either open **Yaria** from the app menu, run `~/.local/bin/yaria-app`, or add `~/.local/bin` to your PATH (the installer prints the exact lines when needed).
+If `yaria-app` is not found, open **Yaria** from the app menu, run `~/.local/bin/yaria-app`, or add `~/.local/bin` to your PATH (the installer prints the exact lines when needed).
+
+**First launch** may download tools (yt-dlp, aria2, ffmpeg, …) in the background. That can take a minute on a slow connection.
 
 </details>
 
@@ -70,8 +72,14 @@ If `yaria-app` is not found, either open **Yaria** from the app menu, run `~/.lo
 1. Download [yaria-app-windows-amd64.zip](https://yaria.live/download/yaria-app-windows-amd64.zip)
 2. Extract → run `yaria-app.exe`
 3. Needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (usually already installed)
+4. Windows may show **SmartScreen** once: *More info* → *Run anyway*
+
+**First launch** may download tools into `%USERPROFILE%\.yaria\dependencies\`.
 
 </details>
+
+> **Desktop app vs CLI:** Want a normal windowed app? Use the Linux installer or Windows zip above.  
+> `npm install -g @zsnero/yaria` is the **terminal CLI only**, not the desktop GUI.
 
 <p align="center">
   <a href="https://yaria.live/download"><img src="https://img.shields.io/badge/Get%20Yaria-Download%20page-8b6cef?style=for-the-badge" alt="Download page" /></a>
