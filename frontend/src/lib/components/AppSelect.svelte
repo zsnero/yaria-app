@@ -2,7 +2,7 @@
   type Option = { value: string | number; label: string };
 
   let {
-    value = $bindable<string | number>(''),
+    value = $bindable<string | number>(),
     options = [] as Option[],
     class: className = '',
     disabled = false,

@@ -59,7 +59,7 @@ export const license = {
 
 // === Settings ===
 export const settings = {
-  getTMDBKey: (): Promise<{ configured: boolean; key: string }> =>
+  getTMDBKey: (): Promise<{ configured: boolean; key: string; using_default?: boolean }> =>
     call(() => wails().SettingsService.GetTMDBKey()),
   saveTMDBKey: (key: string): Promise<any> =>
     call(() => wails().SettingsService.SaveTMDBKey(key)),
@@ -318,6 +318,8 @@ export const media = {
     call(() => wails().MediaService.PlayPath(filePath)),
   getContinueWatching: (): Promise<LocalMedia[]> =>
     call(() => wails().MediaService.GetContinueWatching()),
+  removeFromContinueWatching: (id: string): Promise<any> =>
+    call(() => wails().MediaService.RemoveFromContinueWatching(id)),
   getWatchHistory: (): Promise<LocalMedia[]> =>
     call(() => wails().MediaService.GetWatchHistory()),
   updateResumePosition: (id: string, seconds: number): Promise<any> =>
@@ -330,7 +332,7 @@ export const media = {
     call(() => wails().MediaService.AddMediaFolder(path, category)),
   removeMediaFolder: (path: string, type: string): Promise<any> =>
     call(() => wails().MediaService.RemoveMediaFolder(path, type)),
-  getMediaCount: (): Promise<{ total: number }> =>
+  getMediaCount: (): Promise<{ total: number; movies: number; tv: number; videos: number; music: number; watched: number }> =>
     call(() => wails().MediaService.GetMediaCount()),
   prepareLocalHLS: (id: string): Promise<PrepareStreamResult> =>
     call(() => wails().MediaService.PrepareLocalHLS(id)),
@@ -483,6 +485,7 @@ export const api = {
   dlna,
   player,
   mpv,
+  windowState,
 };
 
 export default api;

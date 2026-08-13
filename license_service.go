@@ -47,8 +47,11 @@ func (l *LicenseService) ActivateKey(key string) map[string]interface{} {
 
 	info, err := license.ActivateKey(key)
 	if err != nil {
+		proInvalidate()
 		return map[string]interface{}{"error": err.Error()}
 	}
+
+	proInvalidate()
 
 	return map[string]interface{}{
 		"valid":       info.Valid,
@@ -64,8 +67,10 @@ func (l *LicenseService) ActivateKey(key string) map[string]interface{} {
 func (l *LicenseService) StartTrial() map[string]interface{} {
 	info, err := license.StartTrial()
 	if err != nil {
+		proInvalidate()
 		return map[string]interface{}{"error": err.Error()}
 	}
+	proInvalidate()
 	return map[string]interface{}{
 		"valid":       info.Valid,
 		"plan":        info.Plan,
@@ -81,6 +86,7 @@ func (l *LicenseService) Deactivate() map[string]interface{} {
 	if err := license.Deactivate(); err != nil {
 		return map[string]interface{}{"error": err.Error()}
 	}
+	proInvalidate()
 	return map[string]interface{}{"status": "deactivated"}
 }
 

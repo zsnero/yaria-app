@@ -30,6 +30,12 @@
 
   let route = $state('/yaria');
   let params = $state(new URLSearchParams());
+
+  let proStatus = $state(false);
+  let proCheckDone = $state(false);
+  let mantorexLegalAccepted = $state(false);
+  let mantorexLegalChecked = $state(false);
+
   let isPlayerRoute = $derived(route === '/play');
   const mantorexRoutes = ['/mantorex', '/home', '/local', '/remote', '/search', '/detail', '/library', '/torrent-downloads'];
   let showModeSwitcher = $derived(!isPlayerRoute && mantorexRoutes.some(r => route.startsWith(r)) && !!ModeSwitcher);
@@ -175,11 +181,6 @@
     }
   }
 
-  let proStatus = $state(false);
-  let proCheckDone = $state(false);
-  let mantorexLegalAccepted = $state(false);
-  let mantorexLegalChecked = $state(false);
-
   // First-run / background dependency install progress
   let setupVisible = $state(false);
   let setupMessage = $state('');
@@ -215,7 +216,7 @@
     }, 2000);
   }
 
-  onMount(async () => {
+  async function runAppSetup() {
     applyUISettings();
     await loadUISettingsFromDisk();
     // Cold start: honor preferred startup tab when no real route is in the hash
@@ -323,7 +324,10 @@
     try {
       await api.downloads.initDeps();
     } catch { /* optional */ }
+  }
 
+  onMount(() => {
+    void runAppSetup();
     return () => {
       window.removeEventListener('hashchange', handleHashChange);
       setupCleanups.forEach((fn) => fn());

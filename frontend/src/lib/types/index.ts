@@ -14,6 +14,9 @@ export interface MetaResult {
   title: string;
   name?: string;
   year?: string;
+  tmdb_id?: number;
+  release_date?: string;
+  first_air_date?: string;
   type: 'movie' | 'tv';
   poster?: string;
   poster_hq?: string;
@@ -61,6 +64,9 @@ export interface LocalMedia {
   duration?: number;
   resume_pos?: number;
   watched?: boolean;
+  added_at?: string;
+  watched_at?: string;
+  last_played_at?: string;
   codec?: string;
   audio_codec?: string;
   category?: string;

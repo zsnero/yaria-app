@@ -1,8 +1,16 @@
 <script lang="ts">
-  import { activeTab, navigate } from '../stores/app';
+  import { activeTab, navigate, currentRoute } from '../stores/app';
 
   let tab = $state<'yaria' | 'mantorex'>('yaria');
   activeTab.subscribe(v => tab = v);
+
+  let route = $state('/yaria');
+  currentRoute.subscribe(r => route = r);
+
+  // The search box performs torrent title search — not needed on Local / Remote
+  const showSearch = $derived(
+    tab === 'mantorex' && route !== '/local' && route !== '/remote'
+  );
 
   function switchTab(t: 'yaria' | 'mantorex') {
     navigate(t === 'yaria' ? '#/yaria' : '#/local');
@@ -38,7 +46,7 @@
   </div>
 
   <div class="nav-right">
-    {#if tab === 'mantorex'}
+    {#if showSearch}
       <div class="search-box">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="search-icon">
           <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>

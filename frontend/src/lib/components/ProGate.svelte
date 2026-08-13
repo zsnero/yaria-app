@@ -35,8 +35,15 @@
     try {
       const result = await api.license.startTrial();
       if (result?.valid) {
-        toastSuccess('30-day Pro trial started');
-        onActivated();
+        const exp = String(result.expires_at || '');
+        const expired = exp && !isNaN(Date.parse(exp)) && new Date(exp + 'T23:59:59').getTime() < Date.now();
+        if (expired) {
+          error = 'Your free trial on this device has ended. Enter a license key to continue.';
+          trialUsed = true;
+        } else {
+          toastSuccess('30-day Pro trial started');
+          onActivated();
+        }
       } else {
         const msg = result?.error || result?.message || 'Could not start trial';
         error = msg;
