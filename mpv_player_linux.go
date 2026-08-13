@@ -10,6 +10,7 @@ package main
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <dlfcn.h>
+#include <locale.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -180,7 +181,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 	"unsafe"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -333,7 +333,7 @@ func mpvPlatformStart(ctx context.Context) error {
 
 	dpy := C.XOpenDisplay(nil)
 	if dpy == nil {
-		return fmt.Errorf("cannot open X11 display")
+		return fmt.Errorf("cannot open X11 display (DISPLAY=%q)", os.Getenv("DISPLAY"))
 	}
 	mpvDisplay = dpy
 	root := C.XDefaultRootWindow(dpy)
@@ -354,6 +354,13 @@ func mpvPlatformStart(ctx context.Context) error {
 		mpvDisplay = nil
 		return fmt.Errorf("failed to create child window")
 	}
+
+	// libmpv aborts in mpv_create() unless LC_NUMERIC is "C" (locale-independent
+	// number parsing). Set it before creating the handle — safe for Go/GTK which
+	// do their own number formatting.
+	loc := C.CString("C")
+	C.setlocale(C.LC_NUMERIC, loc)
+	C.free(unsafe.Pointer(loc))
 
 	h := C.y_mpv_create()
 	if h == nil {
@@ -380,6 +387,10 @@ func mpvPlatformStart(ctx context.Context) error {
 		C.free(unsafe.Pointer(cv))
 	}
 	setOpt("vo", "gpu")
+	// mpv 0.35+ defaults gpu-api to Vulkan; with an X11 child window under
+	// XWayland that silently falls back to a detached top-level window.
+	// Force the EGL/OpenGL context so the video actually embeds in-window.
+	setOpt("gpu-context", "x11egl")
 	setOpt("hwdec", "auto-safe")
 	setOpt("keep-open", "yes")
 	setOpt("idle", "yes")
@@ -387,6 +398,9 @@ func mpvPlatformStart(ctx context.Context) error {
 	setOpt("input-default-bindings", "no")
 	setOpt("input-vo-keyboard", "no")
 	setOpt("cursor-autohide", "always")
+	// Allow the volume property above 100% so the frontend's audio-boost slider
+	// (100-500%) maps directly onto mpv's volume.
+	setOpt("volume-max", "500")
 
 	if C.y_mpv_initialize(h) < 0 {
 		C.y_mpv_destroy(h)
@@ -406,18 +420,20 @@ func mpvPlatformStart(ctx context.Context) error {
 func mpvEventLoop() {
 	for mpvEventRun && mpvHandle != nil {
 		ev := C.y_mpv_wait_event(mpvHandle, 0.25)
-		if ev == nil {
-			continue
-		}
-		switch ev.event_id {
-		case C.MPV_EVENT_SHUTDOWN:
-			return
-		case C.MPV_EVENT_END_FILE:
-			if mpvCtx != nil {
-				wailsRuntime.EventsEmit(mpvCtx, "mpv-eof", map[string]interface{}{})
+		if ev != nil {
+			switch ev.event_id {
+			case C.MPV_EVENT_SHUTDOWN:
+				return
+			case C.MPV_EVENT_END_FILE:
+				if mpvCtx != nil {
+					wailsRuntime.EventsEmit(mpvCtx, "mpv-eof", map[string]interface{}{})
+				}
+			case C.MPV_EVENT_PROPERTY_CHANGE, C.MPV_EVENT_PLAYBACK_RESTART:
 			}
-		case C.MPV_EVENT_PROPERTY_CHANGE, C.MPV_EVENT_PLAYBACK_RESTART:
 		}
+		// Steady-state playback produces almost no mpv events, so also push
+		// time/duration on every wake. Without this the frontend's currentTime
+		// stalls near 0 and position saves / Continue Watching never update.
 		if mpvCtx != nil && mpvHandle != nil {
 			t := mpvPlatformGetTime()
 			d := mpvPlatformGetDuration()
@@ -450,7 +466,6 @@ func mpvPlatformLoad(pathOrURL string) error {
 	if ret < 0 {
 		return fmt.Errorf("loadfile failed: %s", C.GoString(C.y_mpv_error_string(ret)))
 	}
-	_ = time.Now()
 	return nil
 }
 
@@ -530,13 +545,32 @@ func mpvPlatformSetVolume(vol float64) error {
 	if vol < 0 {
 		vol = 0
 	}
-	if vol > 100 {
-		vol = 100
+	if vol > 500 {
+		vol = 500
 	}
 	v := C.double(vol)
 	ck := C.CString("volume")
 	defer C.free(unsafe.Pointer(ck))
 	return mpvRet(C.y_mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_DOUBLE, unsafe.Pointer(&v)))
+}
+
+// mpvPlatformSetSubtitle adds an external subtitle file (sub-add ... select).
+func mpvPlatformSetSubtitle(path string) error {
+	if mpvHandle == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("empty subtitle path")
+	}
+	subCmd := C.CString("sub-add")
+	cpath := C.CString(path)
+	sel := C.CString("select")
+	defer C.free(unsafe.Pointer(subCmd))
+	defer C.free(unsafe.Pointer(cpath))
+	defer C.free(unsafe.Pointer(sel))
+	args := []*C.char{subCmd, cpath, sel, nil}
+	return mpvRet(C.y_mpv_command(mpvHandle, &args[0]))
 }
 
 func mpvPlatformGetTime() float64 {

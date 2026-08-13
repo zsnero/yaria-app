@@ -31,6 +31,8 @@ func mpvPlatformSeek(seconds float64) error { return fmt.Errorf("libmpv not avai
 
 func mpvPlatformSetVolume(vol float64) error { return fmt.Errorf("libmpv not available") }
 
+func mpvPlatformSetSubtitle(path string) error { return fmt.Errorf("libmpv not available") }
+
 func mpvPlatformGetTime() float64 { return 0 }
 
 func mpvPlatformGetDuration() float64 { return 0 }

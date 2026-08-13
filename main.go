@@ -21,6 +21,11 @@ var rawAssets embed.FS
 //   go build -tags webkit2_41
 
 func main() {
+	// libmpv embedding requires an X11 client window; on Wayland sessions this
+	// re-execs with GDK_BACKEND=x11 (no-op otherwise). Must run before wails
+	// initializes any GUI.
+	ensureX11ForMpv()
+
 	// Strip the "frontend/dist" prefix so files are served at root
 	assets, err := fs.Sub(rawAssets, "frontend/dist")
 	if err != nil {

@@ -310,6 +310,15 @@ func mpvPlatformSetVolume(vol float64) error {
 	return err
 }
 
+func mpvPlatformSetSubtitle(path string) error {
+	w := winMPV
+	if w == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	_, err := w.command("sub_add", path, "select")
+	return err
+}
+
 func mpvPlatformGetTime() float64 {
 	if winMPV == nil {
 		return 0

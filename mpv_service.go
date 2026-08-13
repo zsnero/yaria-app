@@ -128,6 +128,16 @@ func (m *MpvService) SetVolume(vol float64) map[string]interface{} {
 	return map[string]interface{}{"status": "ok"}
 }
 
+// SetSubtitle adds an external subtitle file to the currently playing media.
+func (m *MpvService) SetSubtitle(path string) map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := mpvPlatformSetSubtitle(path); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "ok"}
+}
+
 func (m *MpvService) GetTime() float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()

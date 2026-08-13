@@ -119,6 +119,8 @@ export const mpv = {
     call(() => wails().MpvService.Seek(seconds)),
   setVolume: (vol: number): Promise<any> =>
     call(() => wails().MpvService.SetVolume(vol)),
+  setSubtitle: (path: string): Promise<any> =>
+    call(() => wails().MpvService.SetSubtitle(path)),
   getTime: (): Promise<number> =>
     call(() => wails().MpvService.GetTime()),
   getDuration: (): Promise<number> =>
@@ -376,6 +378,31 @@ export const updater = {
     call(() => wails().UpdaterService.UpdateStatus()),
   restart: (): Promise<void> =>
     call(() => wails().UpdaterService.RestartApp()),
+};
+
+// === Wails Runtime Window State ===
+export const windowState = {
+  // Reflects compositor/WM fullscreen (e.g. Hyprland Win+F), which does NOT fire
+  // DOM fullscreenchange events. The minified prod build renames the runtime
+  // method to `ln`, so probe both; fall back to a size heuristic.
+  isFullscreen: async (): Promise<boolean> => {
+    const rt: any = runtime();
+    const fn = rt?.WindowIsFullscreen ?? rt?.ln;
+    if (typeof fn === 'function') {
+      try {
+        return !!(await fn.call(rt));
+      } catch { /* fall through to size heuristic */ }
+    }
+    try {
+      const s = window.screen as any;
+      return (
+        (window.innerWidth || 0) >= (s?.width || 0) - 2 &&
+        (window.innerHeight || 0) >= (s?.height || 0) - 2
+      );
+    } catch {
+      return false;
+    }
+  },
 };
 
 // === Wails Runtime Events ===
