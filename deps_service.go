@@ -128,6 +128,12 @@ func (d *DepsService) ListEntries(path, fileExt string) []map[string]interface{}
 	return out
 }
 
+// ListStorageDevices returns attached storage (external HDDs, USB drives,
+// mounted partitions) so the in-app file picker can reach them.
+func (d *DepsService) ListStorageDevices() []map[string]interface{} {
+	return mountedStorageDevices()
+}
+
 // ReadTextFile reads a UTF-8 text file (used for library import, etc.).
 func (d *DepsService) ReadTextFile(path string) map[string]interface{} {
 	path = expandTilde(path)

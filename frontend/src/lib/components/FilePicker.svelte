@@ -35,6 +35,12 @@
     icon: string;
   }
 
+  interface StorageDevice {
+    name: string;
+    path: string;
+    device?: string;
+  }
+
   const quickAccessLocations: QuickAccess[] = [
     { name: 'Downloads', path: '~/Downloads', icon: '📥' },
     { name: 'Mantorex', path: '~/Downloads/Mantorex', icon: '🎬' },
@@ -42,6 +48,7 @@
     { name: 'Home', path: '~', icon: '🏠' },
     { name: 'Desktop', path: '~/Desktop', icon: '🖥' },
     { name: 'Documents', path: '~/Documents', icon: '📁' },
+    { name: 'Computer', path: '/', icon: '💻' },
   ];
 
   let currentPath = $state('~');
@@ -52,6 +59,7 @@
   let activeQuickAccess = $state('');
   let fileName = $state(defaultFileName || '');
   let selectedFile = $state('');
+  let storageDevices: StorageDevice[] = $state([]);
 
   // New folder state
   let showNewFolderInput = $state(false);
@@ -80,8 +88,11 @@
   });
 
   function buildBreadcrumbs(path: string): { label: string; path: string }[] {
-    const parts = path.split('/').filter((p) => p);
     const crumbs: { label: string; path: string }[] = [];
+    if (path === '/' || path === '\\') {
+      return [{ label: 'Computer', path: '/' }];
+    }
+    const parts = path.split(/[\\/]/).filter((p) => p);
     let cumPath = '';
 
     for (const part of parts) {
@@ -206,6 +217,14 @@
 
   onMount(() => {
     if (defaultFileName) fileName = defaultFileName;
+    deps
+      .listStorageDevices()
+      .then((devices) => {
+        storageDevices = devices || [];
+      })
+      .catch(() => {
+        storageDevices = [];
+      });
     navigateTo('~');
   });
 </script>
@@ -236,10 +255,26 @@
               onclick={() => handleQuickAccess(loc)}
             >
               <span class="fp-quick-icon">{loc.icon}</span>
-              <span>{loc.name}</span>
+              <span class="fp-quick-name">{loc.name}</span>
             </button>
           {/each}
         </div>
+
+        {#if storageDevices.length > 0}
+          <div class="fp-section-title" style="margin-top: 16px;">Devices</div>
+          <div class="fp-quick">
+            {#each storageDevices as dev}
+              <button
+                class="fp-quick-item"
+                class:active={activeQuickAccess === dev.path}
+                onclick={() => handleQuickAccess({ name: dev.name, path: dev.path, icon: '💾' })}
+              >
+                <span class="fp-quick-icon">💾</span>
+                <span class="fp-quick-name" title={dev.name}>{dev.name}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
 
         <div class="fp-section-title" style="margin-top: 16px;">Current</div>
         <div class="fp-current-path">{currentPath}</div>
@@ -435,6 +470,14 @@
 
   .fp-quick-icon {
     font-size: 14px;
+  }
+
+  .fp-quick-name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .fp-current-path {

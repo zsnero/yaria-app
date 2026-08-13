@@ -182,6 +182,8 @@ export const deps = {
     call(() => wails().DepsService.FFmpegPath()),
   listDirectories: (path: string): Promise<{ name: string; path: string }[]> =>
     call(() => wails().DepsService.ListDirectories(path)),
+  listStorageDevices: (): Promise<{ name: string; path: string; device?: string }[]> =>
+    call(() => wails().DepsService.ListStorageDevices()),
   listEntries: (path: string, fileExt = ''): Promise<{ name: string; path: string; is_dir?: boolean }[]> =>
     call(() => wails().DepsService.ListEntries(path, fileExt)),
   readTextFile: (path: string): Promise<{ data?: string; path?: string; error?: string }> =>
