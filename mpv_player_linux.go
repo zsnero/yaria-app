@@ -115,6 +115,7 @@ static int (*p_mpv_get_property)(mpv_handle*, const char*, mpv_format, void*);
 static int (*p_mpv_command)(mpv_handle*, const char**);
 static const char *(*p_mpv_error_string)(int);
 static mpv_event *(*p_mpv_wait_event)(mpv_handle*, double);
+static void (*p_mpv_free_node_contents)(mpv_node*);
 
 static int yaria_bind_sym(void **dst, const char *name) {
 	*dst = dlsym(yaria_libmpv, name);
@@ -149,7 +150,8 @@ int yaria_load_libmpv(const char *path, char **err_out) {
 		yaria_bind_sym((void**)&p_mpv_get_property, "mpv_get_property") ||
 		yaria_bind_sym((void**)&p_mpv_command, "mpv_command") ||
 		yaria_bind_sym((void**)&p_mpv_error_string, "mpv_error_string") ||
-		yaria_bind_sym((void**)&p_mpv_wait_event, "mpv_wait_event")) {
+		yaria_bind_sym((void**)&p_mpv_wait_event, "mpv_wait_event") ||
+		yaria_bind_sym((void**)&p_mpv_free_node_contents, "mpv_free_node_contents")) {
 		if (err_out) *err_out = strdup("libmpv missing required symbols");
 		dlclose(yaria_libmpv);
 		yaria_libmpv = NULL;
@@ -167,15 +169,118 @@ void y_mpv_destroy(mpv_handle *h) { p_mpv_destroy(h); }
 void y_mpv_terminate_destroy(mpv_handle *h) { p_mpv_terminate_destroy(h); }
 int y_mpv_set_option_string(mpv_handle *h, const char *k, const char *v) { return p_mpv_set_option_string(h, k, v); }
 int y_mpv_set_property(mpv_handle *h, const char *name, mpv_format fmt, void *data) { return p_mpv_set_property(h, name, fmt, data); }
+int y_mpv_set_property_string(mpv_handle *h, const char *name, const char *value) { return p_mpv_set_property(h, name, MPV_FORMAT_STRING, (void*)&value); }
 int y_mpv_get_property(mpv_handle *h, const char *name, mpv_format fmt, void *data) { return p_mpv_get_property(h, name, fmt, data); }
 int y_mpv_command(mpv_handle *h, const char **args) { return p_mpv_command(h, args); }
 const char *y_mpv_error_string(int code) { return p_mpv_error_string(code); }
 mpv_event *y_mpv_wait_event(mpv_handle *h, double timeout) { return p_mpv_wait_event(h, timeout); }
+
+// --- track-list → JSON (audio/video/subtitle track enumeration) ---
+
+static void yaria_jappend(char **out, size_t *cap, size_t *len, const char *s) {
+	size_t sl = strlen(s);
+	if (*out == NULL) {
+		*cap = 256;
+		*out = malloc(*cap);
+		*len = 0;
+		(*out)[0] = 0;
+	}
+	if (*len + sl + 1 > *cap) {
+		while (*len + sl + 1 > *cap) *cap *= 2;
+		*out = realloc(*out, *cap);
+	}
+	memcpy(*out + *len, s, sl);
+	*len += sl;
+	(*out)[*len] = 0;
+}
+
+static int yaria_is_track_key(const char *k) {
+	return strcmp(k, "id") == 0 || strcmp(k, "type") == 0 || strcmp(k, "lang") == 0 ||
+		strcmp(k, "title") == 0 || strcmp(k, "selected") == 0 || strcmp(k, "default") == 0 ||
+		strcmp(k, "external") == 0 || strcmp(k, "codec") == 0;
+}
+
+static void yaria_track_value(char **out, size_t *cap, size_t *len, const mpv_node *v) {
+	switch (v->format) {
+	case MPV_FORMAT_STRING:
+		yaria_jappend(out, cap, len, "\"");
+		if (v->u.string) {
+			const char *p = v->u.string;
+			while (*p) {
+				if (*p == '"' || *p == '\\') {
+					char esc[3] = { '\\', *p, 0 };
+					yaria_jappend(out, cap, len, esc);
+				} else {
+					char c[2] = { *p, 0 };
+					yaria_jappend(out, cap, len, c);
+				}
+				p++;
+			}
+		}
+		yaria_jappend(out, cap, len, "\"");
+		break;
+	case MPV_FORMAT_FLAG:
+		yaria_jappend(out, cap, len, v->u.flag ? "true" : "false");
+		break;
+	case MPV_FORMAT_INT64:
+		{
+			char tmp[32];
+			snprintf(tmp, sizeof tmp, "%lld", (long long)v->u.int64);
+			yaria_jappend(out, cap, len, tmp);
+		}
+		break;
+	case MPV_FORMAT_DOUBLE:
+		{
+			char tmp[40];
+			snprintf(tmp, sizeof tmp, "%g", v->u.double_);
+			yaria_jappend(out, cap, len, tmp);
+		}
+		break;
+	default:
+		yaria_jappend(out, cap, len, "null");
+	}
+}
+
+// Returns a malloc'd JSON array of the current file's tracks (caller frees).
+static char *yaria_mpv_get_tracks_json(mpv_handle *h) {
+	mpv_node root;
+	if (p_mpv_get_property(h, "track-list", MPV_FORMAT_NODE, &root) < 0) {
+		return NULL;
+	}
+	char *out = NULL;
+	size_t cap = 0, len = 0;
+	yaria_jappend(&out, &cap, &len, "[");
+	if (root.format == MPV_FORMAT_NODE_ARRAY && root.u.list) {
+		for (int i = 0; i < root.u.list->num; i++) {
+			if (i) yaria_jappend(&out, &cap, &len, ",");
+			mpv_node *item = &root.u.list->values[i];
+			yaria_jappend(&out, &cap, &len, "{");
+			if (item && item->format == MPV_FORMAT_NODE_MAP && item->u.list) {
+				int first = 1;
+				for (int k = 0; k < item->u.list->num; k++) {
+					const char *key = item->u.list->keys ? item->u.list->keys[k] : NULL;
+					if (!key || !yaria_is_track_key(key)) continue;
+					if (!first) yaria_jappend(&out, &cap, &len, ",");
+					first = 0;
+					yaria_jappend(&out, &cap, &len, "\"");
+					yaria_jappend(&out, &cap, &len, key);
+					yaria_jappend(&out, &cap, &len, "\":");
+					yaria_track_value(&out, &cap, &len, &item->u.list->values[k]);
+				}
+			}
+			yaria_jappend(&out, &cap, &len, "}");
+		}
+	}
+	yaria_jappend(&out, &cap, &len, "]");
+	p_mpv_free_node_contents(&root);
+	return out;
+}
 */
 import "C"
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -414,6 +519,9 @@ func mpvPlatformStart(ctx context.Context) error {
 	mpvHandle = h
 	mpvEventRun = true
 	go mpvEventLoop()
+	// Restore the user's last aspect-ratio mode (idle set is valid; it applies
+	// once a file loads).
+	_ = mpvPlatformSetAspectMode(mpvAspectMode)
 	return nil
 }
 
@@ -635,4 +743,112 @@ func mpvRet(code C.int) error {
 		return nil
 	}
 	return fmt.Errorf("%s", C.GoString(C.y_mpv_error_string(code)))
+}
+
+// mpvPlatformGetTracks returns the current file's video/audio/subtitle tracks.
+func mpvPlatformGetTracks() []MpvTrack {
+	if mpvHandle == nil {
+		return nil
+	}
+	cj := C.yaria_mpv_get_tracks_json(mpvHandle)
+	if cj == nil {
+		return nil
+	}
+	defer C.free(unsafe.Pointer(cj))
+	var tracks []MpvTrack
+	if err := json.Unmarshal([]byte(C.GoString(cj)), &tracks); err != nil {
+		return nil
+	}
+	return tracks
+}
+
+// mpvPlatformSetAudioTrack selects an audio track by id (0 = mpv auto).
+func mpvPlatformSetAudioTrack(id int) error {
+	if mpvHandle == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	if id < 0 {
+		id = 0
+	}
+	v := C.int64_t(id)
+	ck := C.CString("aid")
+	defer C.free(unsafe.Pointer(ck))
+	return mpvRet(C.y_mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_INT64, unsafe.Pointer(&v)))
+}
+
+// mpvPlatformSetSubtitleTrack selects a subtitle track by id (0 = mpv auto, -1 = no).
+func mpvPlatformSetSubtitleTrack(id int) error {
+	if mpvHandle == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	v := C.int64_t(id)
+	ck := C.CString("sid")
+	defer C.free(unsafe.Pointer(ck))
+	return mpvRet(C.y_mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_INT64, unsafe.Pointer(&v)))
+}
+
+// mpvPlatformSetSubtitleEnabled toggles sub-visibility without changing the track.
+func mpvPlatformSetSubtitleEnabled(on bool) error {
+	if mpvHandle == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	var flag C.int
+	if on {
+		flag = 1
+	}
+	ck := C.CString("sub-visibility")
+	defer C.free(unsafe.Pointer(ck))
+	return mpvRet(C.y_mpv_set_property(mpvHandle, ck, C.MPV_FORMAT_FLAG, unsafe.Pointer(&flag)))
+}
+
+// mpvAspectMode tracks the current aspect-ratio mode so the frontend can cycle
+// through them. Default "original" (letterbox, keep aspect) matches mpv's
+// default framing.
+var mpvAspectMode = "original"
+
+// mpvPlatformSetAspectMode applies one of: stretch | fill | original | 16:9 |
+// 4:3 | 2.35. Modes react to window resizes automatically (keepaspect/panscan
+// are continuous properties; video-aspect-override is only used for fixed
+// ratios).
+func mpvPlatformSetAspectMode(mode string) error {
+	if mpvHandle == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	mpvAspectMode = mode
+	setP := func(name, val string) error {
+		cn := C.CString(name)
+		cv := C.CString(val)
+		defer C.free(unsafe.Pointer(cn))
+		defer C.free(unsafe.Pointer(cv))
+		return mpvRet(C.y_mpv_set_property_string(mpvHandle, cn, cv))
+	}
+	// Reset to default framing first.
+	if err := setP("keepaspect", "yes"); err != nil {
+		return err
+	}
+	if err := setP("panscan", "0"); err != nil {
+		return err
+	}
+	if err := setP("video-aspect-override", "-2"); err != nil {
+		return err
+	}
+	switch mode {
+	case "stretch":
+		return setP("keepaspect", "no")
+	case "fill":
+		return setP("panscan", "1")
+	case "original":
+		return nil
+	case "16:9":
+		return setP("video-aspect-override", "1.7777778")
+	case "4:3":
+		return setP("video-aspect-override", "1.3333333")
+	case "2.35":
+		return setP("video-aspect-override", "2.35")
+	}
+	return nil
+}
+
+func mpvPlatformGetAspectMode() string {
+	return mpvAspectMode
 }

@@ -22,33 +22,42 @@ import (
 )
 
 var (
-	user32               = windows.NewLazySystemDLL("user32.dll")
-	procFindWindowW      = user32.NewProc("FindWindowW")
-	procCreateWindowExW  = user32.NewProc("CreateWindowExW")
-	procDestroyWindow    = user32.NewProc("DestroyWindow")
-	procShowWindow       = user32.NewProc("ShowWindow")
-	procMoveWindow       = user32.NewProc("MoveWindow")
-	procClientToScreen   = user32.NewProc("ClientToScreen")
-	procSetWindowPos     = user32.NewProc("SetWindowPos")
+	user32                     = windows.NewLazySystemDLL("user32.dll")
+	shcore                     = windows.NewLazySystemDLL("shcore.dll")
+	procFindWindowW            = user32.NewProc("FindWindowW")
+	procCreateWindowExW        = user32.NewProc("CreateWindowExW")
+	procDestroyWindow          = user32.NewProc("DestroyWindow")
+	procShowWindow             = user32.NewProc("ShowWindow")
+	procMoveWindow             = user32.NewProc("MoveWindow")
+	procClientToScreen         = user32.NewProc("ClientToScreen")
+	procSetWindowPos           = user32.NewProc("SetWindowPos")
+	procGetDpiForWindow        = user32.NewProc("GetDpiForWindow")
+	procGetForegroundWindow    = user32.NewProc("GetForegroundWindow")
+	procGetAncestor            = user32.NewProc("GetAncestor")
+	procGetProcessDpiAwareness = shcore.NewProc("GetProcessDpiAwareness")
 )
 
 const (
 	// WebView2 covers WS_CHILD windows — use an owned popup layered over the hole.
-	wsPopup        = 0x80000000
-	wsVisible      = 0x10000000
-	wsClipSiblings = 0x04000000
-	wsClipChildren = 0x02000000
-	wsExNoActivate = 0x08000000
-	wsExToolwindow = 0x00000080
-	wsExTopmost    = 0x00000008
-	swHide         = 0
+	wsPopup          = 0x80000000
+	wsVisible        = 0x10000000
+	wsClipSiblings   = 0x04000000
+	wsClipChildren   = 0x02000000
+	wsExNoActivate   = 0x08000000
+	wsExToolwindow   = 0x00000080
+	wsExTopmost      = 0x00000008
+	swHide           = 0
 	swShowNoActivate = 4
-	swpNoZOrder    = 0x0004
-	swpNoActivate  = 0x0010
-	swpShowWindow  = 0x0040
-	swpHideWindow  = 0x0080
-	hwndTop        = 0
-	hwndTopmost    = ^uintptr(0) // -1
+	swpNoZOrder      = 0x0004
+	swpNoActivate    = 0x0010
+	swpNoMove        = 0x0002
+	swpNoSize        = 0x0001
+	swpShowWindow    = 0x0040
+	swpHideWindow    = 0x0080
+	hwndTop          = 0
+	hwndTopmost      = ^uintptr(0) // -1
+	hwndNotopmost    = ^uintptr(1) // -2
+	gaRoot           = 2
 )
 
 type point struct {
@@ -56,22 +65,23 @@ type point struct {
 }
 
 type winMpv struct {
-	ctx        context.Context
-	parent     windows.HWND
-	child      windows.HWND
-	cmd        *exec.Cmd
-	conn       net.Conn
-	pipeName   string
-	mu         sync.Mutex
-	writeMu    sync.Mutex
-	reqID      atomic.Int64
-	pending    map[int64]chan ipcReply
-	pendingMu  sync.Mutex
-	timePos    float64
-	duration   float64
-	paused     bool
-	eventRun   bool
-	lastB      struct{ x, y, w, h int }
+	ctx       context.Context
+	parent    windows.HWND
+	child     windows.HWND
+	cmd       *exec.Cmd
+	conn      net.Conn
+	pipeName  string
+	mu        sync.Mutex
+	writeMu   sync.Mutex
+	reqID     atomic.Int64
+	pending   map[int64]chan ipcReply
+	pendingMu sync.Mutex
+	timePos   float64
+	duration  float64
+	paused    bool
+	eventRun  bool
+	visible   bool
+	lastB     struct{ x, y, w, h int }
 }
 
 type ipcReply struct {
@@ -157,6 +167,9 @@ func mpvPlatformStart(ctx context.Context) error {
 		"--cursor-autohide=always",
 		"--hwdec=auto-safe",
 		"--vo=gpu",
+		// Allow the volume property above 100% so the frontend's audio-boost
+		// slider (100-500%) maps directly onto mpv's volume (matches Linux).
+		"--volume-max=500",
 		fmt.Sprintf("--input-ipc-server=%s", ipcArg),
 	)
 	hideConsole(cmd)
@@ -197,6 +210,10 @@ func mpvPlatformStart(ctx context.Context) error {
 	_, _ = w.command("observe_property", 2, "duration")
 	_, _ = w.command("observe_property", 3, "pause")
 
+	// Restore the user's last aspect-ratio mode (idle set is valid; it applies
+	// once a file loads).
+	_ = mpvPlatformSetAspectMode(mpvAspectMode)
+
 	return nil
 }
 
@@ -225,7 +242,12 @@ func mpvPlatformSetBounds(x, y, w, h float64) error {
 	if st == nil || st.child == 0 || st.parent == 0 {
 		return fmt.Errorf("mpv surface not ready")
 	}
-	ix, iy, iw, ih := int(x+0.5), int(y+0.5), int(w+0.5), int(h+0.5)
+	// The frontend reports CSS pixels (DIPs). When this process is DPI-aware,
+	// Win32 coordinates are physical pixels, so scale up; when DPI-unaware the
+	// system virtualizes coordinates to DIPs and no scaling is needed.
+	scale := winDpiScale()
+	fx, fy, fw, fh := x*scale, y*scale, w*scale, h*scale
+	ix, iy, iw, ih := int(fx+0.5), int(fy+0.5), int(fw+0.5), int(fh+0.5)
 	if iw < 2 {
 		iw = 2
 	}
@@ -242,22 +264,73 @@ func mpvPlatformSetBounds(x, y, w, h float64) error {
 	return nil
 }
 
+// winDpiScale returns the factor to convert CSS/DIP pixels to physical pixels
+// for the current display, or 1.0 when the process is DPI-unaware.
+func winDpiScale() float64 {
+	if procGetProcessDpiAwareness == nil {
+		return 1.0
+	}
+	var awareness uint32
+	r, _, _ := procGetProcessDpiAwareness.Call(0, uintptr(unsafe.Pointer(&awareness)))
+	if r != 0 || awareness == 0 {
+		return 1.0
+	}
+	st := winMPV
+	if st == nil || st.parent == 0 {
+		return 1.0
+	}
+	dpi, _, _ := procGetDpiForWindow.Call(uintptr(st.parent))
+	if dpi == 0 {
+		return 1.0
+	}
+	return float64(dpi) / 96.0
+}
+
+// appForeground reports whether the Yaria window (or a child of it) currently
+// has keyboard focus.
+func appForeground(parent windows.HWND) bool {
+	if parent == 0 {
+		return false
+	}
+	fg, _, _ := procGetForegroundWindow.Call()
+	if fg == 0 {
+		return false
+	}
+	root, _, _ := procGetAncestor.Call(fg, uintptr(gaRoot))
+	return windows.HWND(root) == parent
+}
+
+// applyZorder keeps the overlay above WebView2 while Yaria is focused, but
+// drops it below other apps' windows when Yaria loses focus.
+func applyZorder(st *winMpv) {
+	if st == nil || st.child == 0 {
+		return
+	}
+	target := hwndNotopmost
+	if appForeground(st.parent) {
+		target = hwndTopmost
+	}
+	procSetWindowPos.Call(
+		uintptr(st.child),
+		target,
+		0, 0, 0, 0,
+		uintptr(swpNoMove|swpNoSize|swpNoActivate|swpShowWindow),
+	)
+}
+
 func mpvPlatformSetVisible(visible bool) {
 	st := winMPV
 	if st == nil || st.child == 0 {
 		return
 	}
-	const swpNoMove = 0x0002
-	const swpNoSize = 0x0001
+	st.mu.Lock()
+	st.visible = visible
+	st.mu.Unlock()
 	if visible {
 		showHWND(st.child, true)
-		// Stay above WebView2 without activating
-		procSetWindowPos.Call(
-			uintptr(st.child),
-			hwndTopmost,
-			0, 0, 0, 0,
-			uintptr(swpNoMove|swpNoSize|swpNoActivate|swpShowWindow),
-		)
+		// Stay above WebView2 without activating, but drop below other apps
+		// when Yaria loses focus.
+		applyZorder(st)
 	} else {
 		showHWND(st.child, false)
 	}
@@ -303,8 +376,8 @@ func mpvPlatformSetVolume(vol float64) error {
 	if vol < 0 {
 		vol = 0
 	}
-	if vol > 100 {
-		vol = 100
+	if vol > 500 {
+		vol = 500
 	}
 	_, err := w.command("set_property", "volume", vol)
 	return err
@@ -344,6 +417,105 @@ func mpvPlatformIsPaused() bool {
 	winMPV.mu.Lock()
 	defer winMPV.mu.Unlock()
 	return winMPV.paused
+}
+
+func mpvPlatformGetTracks() []MpvTrack {
+	if winMPV == nil {
+		return nil
+	}
+	data, err := winMPV.command("get_property", "track-list")
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	var tracks []MpvTrack
+	if err := json.Unmarshal(data, &tracks); err != nil {
+		return nil
+	}
+	return tracks
+}
+
+func mpvPlatformSetAudioTrack(id int) error {
+	if winMPV == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	if id < 0 {
+		id = 0
+	}
+	if _, err := winMPV.command("set_property", "aid", id); err != nil {
+		return err
+	}
+	return nil
+}
+
+func mpvPlatformSetSubtitleTrack(id int) error {
+	if winMPV == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	if _, err := winMPV.command("set_property", "sid", id); err != nil {
+		return err
+	}
+	return nil
+}
+
+func mpvPlatformSetSubtitleEnabled(on bool) error {
+	if winMPV == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	if _, err := winMPV.command("set_property", "sub-visibility", on); err != nil {
+		return err
+	}
+	return nil
+}
+
+// mpvAspectMode tracks the current aspect-ratio mode so the frontend can cycle
+// through them. Default "original" (letterbox, keep aspect) matches mpv's
+// default framing.
+var mpvAspectMode = "original"
+
+// mpvPlatformSetAspectMode applies one of: stretch | fill | original | 16:9 |
+// 4:3 | 2.35. Modes react to window resizes automatically (keepaspect/panscan
+// are continuous properties; video-aspect-override is only used for fixed
+// ratios).
+func mpvPlatformSetAspectMode(mode string) error {
+	w := winMPV
+	if w == nil {
+		return fmt.Errorf("mpv not started")
+	}
+	mpvAspectMode = mode
+	// Reset to default framing first.
+	if _, err := w.command("set_property", "keepaspect", true); err != nil {
+		return err
+	}
+	if _, err := w.command("set_property", "panscan", 0.0); err != nil {
+		return err
+	}
+	if _, err := w.command("set_property", "video-aspect-override", -2.0); err != nil {
+		return err
+	}
+	switch mode {
+	case "stretch":
+		_, err := w.command("set_property", "keepaspect", false)
+		return err
+	case "fill":
+		_, err := w.command("set_property", "panscan", 1.0)
+		return err
+	case "original":
+		return nil
+	case "16:9":
+		_, err := w.command("set_property", "video-aspect-override", 1.7777778)
+		return err
+	case "4:3":
+		_, err := w.command("set_property", "video-aspect-override", 1.3333333)
+		return err
+	case "2.35":
+		_, err := w.command("set_property", "video-aspect-override", 2.35)
+		return err
+	}
+	return nil
+}
+
+func mpvPlatformGetAspectMode() string {
+	return mpvAspectMode
 }
 
 func mpvPlatformStop() {
@@ -508,6 +680,14 @@ func (w *winMpv) pollLoop() {
 		if w.ctx == nil {
 			continue
 		}
+		// When the user switches back to Yaria, restore the overlay above
+		// WebView2 (it was dropped to HWND_NOTOPMOST while unfocused).
+		w.mu.Lock()
+		vis := w.visible
+		w.mu.Unlock()
+		if vis {
+			applyZorder(w)
+		}
 		w.mu.Lock()
 		tp, dur, paused := w.timePos, w.duration, w.paused
 		w.mu.Unlock()
@@ -617,8 +797,8 @@ type fileConn struct {
 	f *os.File
 }
 
-func (c *fileConn) Read(b []byte) (int, error)         { return c.f.Read(b) }
-func (c *fileConn) Write(b []byte) (int, error)        { return c.f.Write(b) }
+func (c *fileConn) Read(b []byte) (int, error)        { return c.f.Read(b) }
+func (c *fileConn) Write(b []byte) (int, error)       { return c.f.Write(b) }
 func (c *fileConn) Close() error                      { return c.f.Close() }
 func (c *fileConn) LocalAddr() net.Addr               { return pipeAddr("local") }
 func (c *fileConn) RemoteAddr() net.Addr              { return pipeAddr("remote") }

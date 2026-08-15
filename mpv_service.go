@@ -18,6 +18,18 @@ func NewMpvService() *MpvService {
 	return &MpvService{}
 }
 
+// MpvTrack describes one track (video/audio/sub) reported by the native player.
+type MpvTrack struct {
+	ID       int    `json:"id"`
+	Type     string `json:"type"`
+	Lang     string `json:"lang,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Selected bool   `json:"selected"`
+	Default  bool   `json:"default,omitempty"`
+	External bool   `json:"external,omitempty"`
+	Codec    string `json:"codec,omitempty"`
+}
+
 func (m *MpvService) startup(ctx context.Context) {
 	m.ctx = ctx
 }
@@ -162,4 +174,86 @@ func (m *MpvService) Stop() map[string]interface{} {
 	defer m.mu.Unlock()
 	mpvPlatformStop()
 	return map[string]interface{}{"status": "ok"}
+}
+
+// GetTracks returns the current file's video/audio/subtitle tracks.
+func (m *MpvService) GetTracks() []MpvTrack {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return mpvPlatformGetTracks()
+}
+
+// SetAudioTrack selects an audio track by id (0 = mpv auto).
+func (m *MpvService) SetAudioTrack(id int) map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := mpvPlatformSetAudioTrack(id); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "ok"}
+}
+
+// SetSubtitleTrack selects a subtitle track by id (0 = auto, -1 = off).
+func (m *MpvService) SetSubtitleTrack(id int) map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := mpvPlatformSetSubtitleTrack(id); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "ok"}
+}
+
+// SetSubtitleEnabled toggles subtitle visibility without changing the track.
+func (m *MpvService) SetSubtitleEnabled(on bool) map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := mpvPlatformSetSubtitleEnabled(on); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "ok"}
+}
+
+// mpvAspectOrder is the cycle order for the frontend aspect-ratio button.
+// "original" is first because it's the default aspect-ratio mode.
+var mpvAspectOrder = []string{"original", "fill", "stretch", "16:9", "4:3", "2.35"}
+
+// mpvAspectLabel returns the short display label for an aspect-ratio mode.
+func mpvAspectLabel(mode string) string {
+	switch mode {
+	case "stretch":
+		return "Stretch"
+	case "fill":
+		return "Fill"
+	case "original":
+		return "Original"
+	default:
+		return mode // "16:9", "4:3", "2.35"
+	}
+}
+
+// CycleAspect advances to the next aspect-ratio mode and applies it to the
+// running player.
+func (m *MpvService) CycleAspect() map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur := mpvPlatformGetAspectMode()
+	next := mpvAspectOrder[0]
+	for i, mo := range mpvAspectOrder {
+		if mo == cur {
+			next = mpvAspectOrder[(i+1)%len(mpvAspectOrder)]
+			break
+		}
+	}
+	if err := mpvPlatformSetAspectMode(next); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "ok", "mode": next, "label": mpvAspectLabel(next)}
+}
+
+// GetAspectMode returns the current aspect-ratio mode and its label.
+func (m *MpvService) GetAspectMode() map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mode := mpvPlatformGetAspectMode()
+	return map[string]interface{}{"mode": mode, "label": mpvAspectLabel(mode)}
 }

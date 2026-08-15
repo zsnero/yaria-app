@@ -129,7 +129,31 @@ export const mpv = {
     call(() => wails().MpvService.IsPaused()),
   stop: (): Promise<any> =>
     call(() => wails().MpvService.Stop()),
+  getTracks: (): Promise<MpvTrack[]> =>
+    call(() => wails().MpvService.GetTracks()),
+  setAudioTrack: (id: number): Promise<any> =>
+    call(() => wails().MpvService.SetAudioTrack(id)),
+  setSubtitleTrack: (id: number): Promise<any> =>
+    call(() => wails().MpvService.SetSubtitleTrack(id)),
+  setSubtitleEnabled: (on: boolean): Promise<any> =>
+    call(() => wails().MpvService.SetSubtitleEnabled(on)),
+  cycleAspect: (): Promise<{ mode: string; label: string }> =>
+    call(() => wails().MpvService.CycleAspect()),
+  getAspectMode: (): Promise<{ mode: string; label: string }> =>
+    call(() => wails().MpvService.GetAspectMode()),
 };
+
+// Track as reported by the native player (mpv track-list).
+export interface MpvTrack {
+  id: number;
+  type: string; // video | audio | sub
+  lang?: string;
+  title?: string;
+  selected: boolean;
+  default?: boolean;
+  external?: boolean;
+  codec?: string;
+}
 
 // === Downloads (Yaria) ===
 export const downloads = {

@@ -40,3 +40,15 @@ func mpvPlatformGetDuration() float64 { return 0 }
 func mpvPlatformIsPaused() bool { return true }
 
 func mpvPlatformStop() {}
+
+func mpvPlatformGetTracks() []MpvTrack { return nil }
+
+func mpvPlatformSetAudioTrack(id int) error { return fmt.Errorf("libmpv not available") }
+
+func mpvPlatformSetSubtitleTrack(id int) error { return fmt.Errorf("libmpv not available") }
+
+func mpvPlatformSetSubtitleEnabled(on bool) error { return fmt.Errorf("libmpv not available") }
+
+func mpvPlatformSetAspectMode(mode string) error { return fmt.Errorf("libmpv not available") }
+
+func mpvPlatformGetAspectMode() string { return "original" }
