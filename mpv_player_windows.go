@@ -156,7 +156,7 @@ func mpvPlatformStart(ctx context.Context) error {
 	ipcArg := pipe
 
 	// Note: do not use --force-window with --wid (can open a second empty window).
-	cmd := exec.Command(exe,
+	args := []string{
 		fmt.Sprintf("--wid=%d", uint64(child)),
 		"--idle=yes",
 		"--keep-open=yes",
@@ -165,13 +165,18 @@ func mpvPlatformStart(ctx context.Context) error {
 		"--input-default-bindings=no",
 		"--input-vo-keyboard=no",
 		"--cursor-autohide=always",
-		"--hwdec=auto-safe",
 		"--vo=gpu",
-		// Allow the volume property above 100% so the frontend's audio-boost
-		// slider (100-500%) maps directly onto mpv's volume (matches Linux).
 		"--volume-max=500",
 		fmt.Sprintf("--input-ipc-server=%s", ipcArg),
+	}
+	args = append(args, mpvWindowsCLIFlags()...)
+	// Re-assert embed-critical flags after user config flags
+	args = append(args,
+		"--osc=no",
+		"--input-default-bindings=no",
+		"--input-vo-keyboard=no",
 	)
+	cmd := exec.Command(exe, args...)
 	hideConsole(cmd)
 	// Run from deps dir so DLLs resolve
 	if deps := NewDepsService(); deps != nil {

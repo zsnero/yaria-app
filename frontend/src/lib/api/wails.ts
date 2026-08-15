@@ -82,6 +82,11 @@ export const settings = {
     player_backend?: string;
     startup_tab?: string;
     mantorex_legal_accepted?: boolean;
+    player_hwdec?: string;
+    player_cache?: string;
+    player_hq_scale?: boolean;
+    player_deinterlace?: boolean;
+    player_load_user_config?: boolean;
   }> => call(() => wails().SettingsService.GetUISettings()),
   saveUISettings: (settings: {
     font?: string;
@@ -92,6 +97,11 @@ export const settings = {
     player_backend?: string;
     startup_tab?: string;
     mantorex_legal_accepted?: boolean;
+    player_hwdec?: string;
+    player_cache?: string;
+    player_hq_scale?: boolean;
+    player_deinterlace?: boolean;
+    player_load_user_config?: boolean;
   }): Promise<any> => call(() => wails().SettingsService.SaveUISettings(settings)),
 };
 
@@ -278,6 +288,8 @@ export const stream = {
     call(() => wails().StreamService.ListSubtitleFiles()),
   getTranscodeURL: (): Promise<string> =>
     call(() => wails().StreamService.GetTranscodeURL()),
+  boostPlayback: (positionFrac: number): Promise<any> =>
+    call(() => wails().StreamService.BoostPlayback(positionFrac)),
 };
 
 // === Library ===

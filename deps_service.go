@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -24,12 +25,13 @@ import (
 var zipOpen = zip.OpenReader
 var gzipNewReader = gzip.NewReader
 
-// DepsService manages application-level dependencies (FFmpeg binary).
-// Downloads static binaries from GitHub, no package manager needed.
+// DepsService manages application-level dependencies (FFmpeg, libmpv/mpv).
+// Downloads static binaries from GitHub; HTTP downloads resume via .part files.
 type DepsService struct {
-	ctx     context.Context
-	mu      sync.Mutex
-	depsDir string
+	ctx          context.Context
+	mu           sync.Mutex
+	ensureRunning bool
+	depsDir      string
 }
 
 func NewDepsService() *DepsService {
@@ -291,13 +293,27 @@ func (d *DepsService) MpvLibOrBinary() (string, bool) {
 }
 
 // EnsureAllDeps downloads any missing core deps in the background (FFmpeg, libmpv).
-// Emits "setup-progress" events: {phase, name, percent, message, done, error}.
+// Safe to call on every launch: resumes incomplete .part downloads and skips
+// what's already installed. Emits "setup-progress" events.
 func (d *DepsService) EnsureAllDeps() map[string]interface{} {
 	go d.ensureAllDeps()
 	return map[string]interface{}{"status": "starting"}
 }
 
 func (d *DepsService) ensureAllDeps() {
+	d.mu.Lock()
+	if d.ensureRunning {
+		d.mu.Unlock()
+		return
+	}
+	d.ensureRunning = true
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		d.ensureRunning = false
+		d.mu.Unlock()
+	}()
+
 	emit := func(phase, name string, percent int, message string, done bool, errMsg string) {
 		if d.ctx == nil {
 			return
@@ -315,38 +331,82 @@ func (d *DepsService) ensureAllDeps() {
 	needFFmpeg := d.FFmpegPath() == ""
 	_, mpvOK := d.MpvLibOrBinary()
 	needMpv := !mpvOK
+	resuming := d.hasPartialDownloads()
 
 	// Everything already present — stay silent (no banner on every launch)
 	if !needFFmpeg && !needMpv {
+		d.cleanupStalePartFiles()
 		return
 	}
 
-	emit("start", "", 0, "Setting up missing dependencies…", false, "")
+	if resuming {
+		emit("start", "", 0, "Resuming dependency setup…", false, "")
+	} else {
+		emit("start", "", 0, "Setting up missing dependencies…", false, "")
+	}
 
-	// FFmpeg (needed for WebView transcode / probes)
+	// FFmpeg (probes / remux / WebView)
 	if needFFmpeg {
-		emit("install", "FFmpeg", 5, "Downloading FFmpeg…", false, "")
+		msg := "Downloading FFmpeg…"
+		if d.partialExists("ffmpeg_download.tmp") {
+			msg = "Resuming FFmpeg download…"
+		}
+		emit("install", "FFmpeg", 5, msg, false, "")
 		d.downloadFFmpeg()
 		if d.FFmpegPath() == "" {
-			emit("install", "FFmpeg", 40, "FFmpeg install may have failed — will retry later", false, "")
+			emit("install", "FFmpeg", 40, "FFmpeg install incomplete — will retry next launch", false, "")
 		} else {
 			emit("install", "FFmpeg", 50, "FFmpeg ready", false, "")
 		}
 	}
 
-	// libmpv / mpv (optional native player)
+	// libmpv / mpv — default player on Linux; still useful on Windows
 	if needMpv {
-		emit("install", "libmpv", 55, "Downloading native player (libmpv)…", false, "")
+		msg := "Downloading native player (libmpv)…"
+		if d.partialExists("mpv_download.tmp") {
+			msg = "Resuming native player download…"
+		}
+		emit("install", "libmpv", 55, msg, false, "")
 		d.downloadMpv()
 		if _, ok := d.MpvLibOrBinary(); ok {
 			emit("install", "libmpv", 95, "Native player ready", false, "")
 		} else {
-			// Optional — don't treat as hard failure
-			emit("install", "libmpv", 95, "Native player skipped (optional)", false, "")
+			emit("install", "libmpv", 95, "Native player not ready yet — will retry next launch (WebView still works)", false, "")
 		}
 	}
 
 	emit("complete", "", 100, "Setup complete", true, "")
+}
+
+func (d *DepsService) partialExists(base string) bool {
+	_, err := os.Stat(filepath.Join(d.depsDir, base+".part"))
+	return err == nil
+}
+
+func (d *DepsService) hasPartialDownloads() bool {
+	entries, err := os.ReadDir(d.depsDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".part") {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanupStalePartFiles removes leftover .part files after a full successful install.
+func (d *DepsService) cleanupStalePartFiles() {
+	entries, err := os.ReadDir(d.depsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".part") {
+			_ = os.Remove(filepath.Join(d.depsDir, e.Name()))
+		}
+	}
 }
 
 // InstallMpv downloads portable libmpv/mpv into the app dependencies folder.
@@ -474,13 +534,20 @@ func (d *DepsService) downloadMpvWindows(emit func(string, int, string)) error {
 		return fmt.Errorf("no suitable Windows mpv asset in latest release")
 	}
 
-	emit("downloading", 15, "Downloading "+name+"…")
 	tmp := filepath.Join(d.depsDir, "mpv_download.tmp")
+	if d.partialExists("mpv_download.tmp") {
+		emit("downloading", 15, "Resuming "+name+"…")
+	} else {
+		emit("downloading", 15, "Downloading "+name+"…")
+	}
 	if err := d.downloadToFile(url, tmp, emit, 15, 80); err != nil {
 		return err
 	}
 	emit("extracting", 85, "Extracting mpv…")
-	defer os.Remove(tmp)
+	defer func() {
+		_ = os.Remove(tmp)
+		_ = os.Remove(tmp + ".part")
+	}()
 
 	low := strings.ToLower(name)
 	switch {
@@ -609,63 +676,63 @@ func (d *DepsService) downloadMpvLinux(emit func(string, int, string)) error {
 		return ok
 	}
 
-	// --- Arch family ---
+	// --- Primary: portable HTTP (no package manager, no user prompts) ---
+	// Ubuntu .deb pool + Arch package mirrors work on most glibc desktops.
+	emit("downloading", 8, "Downloading portable libmpv…")
+	if err := d.downloadMpvUbuntuHTTP(emit); err == nil && tryOK() {
+		return nil
+	} else if err != nil {
+		lastErr = err
+		emit("downloading", 12, "portable: "+trimOut(err.Error()))
+	}
+	emit("downloading", 15, "Trying Arch package mirrors…")
+	if err := d.downloadMpvArchHTTP(emit); err == nil && tryOK() {
+		return nil
+	} else if err != nil {
+		lastErr = err
+		emit("downloading", 18, "arch mirror: "+trimOut(err.Error()))
+	}
+
+	// --- Fallbacks: distro package tools (still no root install into /usr) ---
 	if family == "arch" || hasCmd("pacman") {
 		if hasCmd("pacman") {
-			emit("downloading", 10, "Downloading mpv via pacman (no root)…")
+			emit("downloading", 22, "Downloading mpv via pacman cache…")
 			if err := d.downloadMpvViaUserPacman(emit); err == nil && tryOK() {
 				return nil
 			} else if err != nil {
 				lastErr = err
-				emit("downloading", 15, "pacman: "+trimOut(err.Error()))
-			}
-		}
-		// Arch package mirrors (only on Arch-like — glibc/soname match)
-		if family == "arch" || hasCmd("pacman") {
-			emit("downloading", 20, "Downloading libmpv from Arch mirrors…")
-			if err := d.downloadMpvArchHTTP(emit); err == nil && tryOK() {
-				return nil
-			} else if err != nil {
-				lastErr = err
-				emit("downloading", 25, "arch mirror: "+trimOut(err.Error()))
 			}
 		}
 	}
 
-	// --- Debian / Ubuntu / Mint / Pop! ---
 	if family == "debian" || hasCmd("apt-get") {
-		emit("downloading", 30, "Downloading libmpv (apt, no root)…")
+		emit("downloading", 35, "Downloading libmpv via apt cache…")
 		if err := d.downloadMpvApt(emit); err == nil && tryOK() {
 			return nil
 		} else if err != nil {
 			lastErr = err
-			emit("downloading", 40, "apt: "+trimOut(err.Error()))
 		}
 	}
 
-	// --- Fedora / RHEL / CentOS / Nobara ---
 	if family == "fedora" || hasCmd("dnf") || hasCmd("yum") || hasCmd("microdnf") {
-		emit("downloading", 45, "Downloading libmpv (dnf/yum, no root)…")
+		emit("downloading", 50, "Downloading libmpv via dnf/yum…")
 		if err := d.downloadMpvDnf(emit); err == nil && tryOK() {
 			return nil
 		} else if err != nil {
 			lastErr = err
-			emit("downloading", 55, "dnf: "+trimOut(err.Error()))
 		}
 	}
 
-	// --- openSUSE ---
 	if family == "suse" || hasCmd("zypper") {
-		emit("downloading", 60, "Downloading libmpv (zypper)…")
+		emit("downloading", 65, "Downloading libmpv via zypper…")
 		if err := d.downloadMpvZypper(emit); err == nil && tryOK() {
 			return nil
 		} else if err != nil {
 			lastErr = err
-			emit("downloading", 70, "zypper: "+trimOut(err.Error()))
 		}
 	}
 
-	// Generic last resort: if we're not sure of family, try apt then dnf then arch HTTP
+	// Last resort for unknown family
 	if family == "unknown" {
 		if hasCmd("apt-get") {
 			_ = d.downloadMpvApt(emit)
@@ -679,11 +746,6 @@ func (d *DepsService) downloadMpvLinux(emit func(string, int, string)) error {
 				return nil
 			}
 		}
-		if err := d.downloadMpvArchHTTP(emit); err == nil && tryOK() {
-			return nil
-		} else if err != nil {
-			lastErr = err
-		}
 	}
 
 	hint := linuxMpvInstallHint()
@@ -691,6 +753,94 @@ func (d *DepsService) downloadMpvLinux(emit func(string, int, string)) error {
 		return fmt.Errorf("could not auto-download libmpv (%v). WebView still works. Optional: %s", lastErr, hint)
 	}
 	return fmt.Errorf("could not auto-download libmpv. WebView still works. Optional: %s", hint)
+}
+
+// downloadMpvUbuntuHTTP fetches libmpv .debs straight from Ubuntu's package pool
+// (no apt, no root, no prompts). Extracts .so files into the app deps folder.
+func (d *DepsService) downloadMpvUbuntuHTTP(emit func(string, int, string)) error {
+	goarch := runtime.GOARCH
+	debArch := "amd64"
+	poolBase := "http://archive.ubuntu.com/ubuntu/pool/universe/m/mpv/"
+	if goarch == "arm64" {
+		debArch = "arm64"
+		poolBase = "http://ports.ubuntu.com/ubuntu-ports/pool/universe/m/mpv/"
+	} else if goarch != "amd64" {
+		return fmt.Errorf("no portable Ubuntu packages for %s", goarch)
+	}
+
+	emit("downloading", 10, "Fetching libmpv package list…")
+	req, err := http.NewRequest(http.MethodGet, poolBase, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Yaria-Deps")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	resp.Body.Close()
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("pool HTTP %d", resp.StatusCode)
+	}
+
+	// Prefer newest libmpv2_*_<arch>.deb (list is roughly chronological)
+	re := regexp.MustCompile(`href="(libmpv2_[^"]+_` + debArch + `\.deb)"`)
+	matches := re.FindAllStringSubmatch(string(body), -1)
+	if len(matches) == 0 {
+		// Older naming
+		re = regexp.MustCompile(`href="(libmpv1_[^"]+_` + debArch + `\.deb)"`)
+		matches = re.FindAllStringSubmatch(string(body), -1)
+	}
+	if len(matches) == 0 {
+		return fmt.Errorf("no libmpv deb for %s in Ubuntu pool", debArch)
+	}
+	libDeb := matches[len(matches)-1][1]
+
+	// Optional: also grab the mpv binary package for extra shared libs
+	var mpvDeb string
+	reMpv := regexp.MustCompile(`href="(mpv_[^"]+_` + debArch + `\.deb)"`)
+	if m := reMpv.FindAllStringSubmatch(string(body), -1); len(m) > 0 {
+		mpvDeb = m[len(m)-1][1]
+	}
+
+	cache := filepath.Join(d.depsDir, "debcache")
+	_ = os.MkdirAll(cache, 0755)
+
+	// Clean old debs in cache so extract only sees this batch
+	if entries, err := os.ReadDir(cache); err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".deb") {
+				_ = os.Remove(filepath.Join(cache, e.Name()))
+			}
+		}
+	}
+
+	downloadOne := func(name string, lo, hi int) error {
+		url := poolBase + name
+		dest := filepath.Join(cache, name)
+		emit("downloading", lo, "Downloading "+name+"…")
+		return d.downloadToFile(url, dest, emit, lo, hi)
+	}
+
+	if err := downloadOne(libDeb, 15, 55); err != nil {
+		return err
+	}
+	if mpvDeb != "" {
+		_ = downloadOne(mpvDeb, 55, 75) // best-effort
+	}
+
+	emit("extracting", 80, "Extracting libmpv…")
+	if err := d.extractAllLibsFromDebs(cache); err != nil {
+		return err
+	}
+	if _, ok := d.MpvLibPath(); !ok {
+		return fmt.Errorf("libmpv.so not found after extract")
+	}
+	return nil
 }
 
 func hasCmd(name string) bool {
@@ -1173,37 +1323,146 @@ func copyFileMode(src, dest string, mode os.FileMode) error {
 	return cerr
 }
 
+// downloadToFile fetches url into dest, resuming via dest+".part" when possible.
+// Safe if the app quits mid-download — next launch continues with Range requests.
 func (d *DepsService) downloadToFile(url, dest string, emit func(string, int, string), pctLo, pctHi int) error {
-	resp, err := http.Get(url)
+	_ = os.MkdirAll(filepath.Dir(dest), 0755)
+	part := dest + ".part"
+
+	var start int64
+	if st, err := os.Stat(part); err == nil && st.Size() > 0 {
+		start = st.Size()
+	}
+
+	doRequest := func(from int64) (*http.Response, error) {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "Yaria-Deps")
+		if from > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", from))
+			if emit != nil {
+				emit("downloading", pctLo, fmt.Sprintf("Resuming… %dMB already saved", from/(1024*1024)))
+			}
+		}
+		client := &http.Client{Timeout: 0}
+		return client.Do(req)
+	}
+
+	resp, err := doRequest(start)
 	if err != nil {
 		return err
+	}
+
+	// Server ignored Range or doesn't support it — restart full download
+	if start > 0 && resp.StatusCode == http.StatusOK {
+		resp.Body.Close()
+		_ = os.Remove(part)
+		start = 0
+		resp, err = doRequest(0)
+		if err != nil {
+			return err
+		}
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	out, err := os.Create(dest)
+
+	var out *os.File
+	if start > 0 && resp.StatusCode == http.StatusPartialContent {
+		out, err = os.OpenFile(part, os.O_APPEND|os.O_WRONLY, 0644)
+	} else {
+		out, err = os.Create(part)
+		start = 0
+	}
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	total := resp.ContentLength
-	var got int64
+
+	// Total size for progress
+	var total int64
+	if resp.StatusCode == http.StatusPartialContent {
+		// Content-Range: bytes START-END/TOTAL
+		if cr := resp.Header.Get("Content-Range"); cr != "" {
+			var a, b, t int64
+			if _, err := fmt.Sscanf(cr, "bytes %d-%d/%d", &a, &b, &t); err == nil && t > 0 {
+				total = t
+			}
+		}
+		if total <= 0 && resp.ContentLength > 0 {
+			total = start + resp.ContentLength
+		}
+	} else {
+		total = resp.ContentLength
+	}
+
+	got := start
 	buf := make([]byte, 256*1024)
+	var writeErr error
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			out.Write(buf[:n])
+			if _, werr := out.Write(buf[:n]); werr != nil {
+				writeErr = werr
+				break
+			}
 			got += int64(n)
 			if total > 0 && emit != nil {
 				frac := float64(got) / float64(total)
+				if frac > 1 {
+					frac = 1
+				}
 				pct := pctLo + int(frac*float64(pctHi-pctLo))
-				emit("downloading", pct, fmt.Sprintf("Downloading… %dMB / %dMB", got/(1024*1024), total/(1024*1024)))
+				label := "Downloading"
+				if start > 0 {
+					label = "Resuming"
+				}
+				emit("downloading", pct, fmt.Sprintf("%s… %dMB / %dMB", label, got/(1024*1024), total/(1024*1024)))
 			}
 		}
 		if readErr != nil {
+			if readErr != io.EOF {
+				writeErr = readErr
+			}
 			break
 		}
+	}
+	_ = out.Close()
+	if writeErr != nil {
+		// Keep .part for next launch resume
+		return writeErr
+	}
+
+	// Incomplete body (connection dropped)
+	if total > 0 && got < total {
+		return fmt.Errorf("download incomplete (%d / %d bytes) — will resume next launch", got, total)
+	}
+
+	_ = os.Remove(dest)
+	if err := os.Rename(part, dest); err != nil {
+		// Cross-device fallback
+		in, oerr := os.Open(part)
+		if oerr != nil {
+			return err
+		}
+		out2, oerr := os.Create(dest)
+		if oerr != nil {
+			in.Close()
+			return err
+		}
+		_, cerr := io.Copy(out2, in)
+		in.Close()
+		cerr2 := out2.Close()
+		if cerr != nil {
+			return cerr
+		}
+		if cerr2 != nil {
+			return cerr2
+		}
+		_ = os.Remove(part)
 	}
 	return nil
 }
@@ -1281,12 +1540,19 @@ func (d *DepsService) InstallFFmpeg() map[string]interface{} {
 
 func (d *DepsService) downloadFFmpeg() {
 	emit := func(status string, percent int, message string) {
-		wailsRuntime.EventsEmit(d.ctx, "deps-install-progress", map[string]interface{}{
-			"name":    "FFmpeg",
-			"status":  status,
-			"percent": percent,
-			"message": message,
-		})
+		if d.ctx != nil {
+			wailsRuntime.EventsEmit(d.ctx, "deps-install-progress", map[string]interface{}{
+				"name":    "FFmpeg",
+				"status":  status,
+				"percent": percent,
+				"message": message,
+			})
+		}
+	}
+
+	if d.FFmpegPath() != "" {
+		emit("complete", 100, "FFmpeg already available")
+		return
 	}
 
 	emit("downloading", 0, "Fetching FFmpeg static build...")
@@ -1311,46 +1577,17 @@ func (d *DepsService) downloadFFmpeg() {
 		return
 	}
 
-	emit("downloading", 5, "Downloading FFmpeg (~80MB)...")
+	tmpFile := filepath.Join(d.depsDir, "ffmpeg_download.tmp")
+	if d.partialExists("ffmpeg_download.tmp") {
+		emit("downloading", 5, "Resuming FFmpeg download…")
+	} else {
+		emit("downloading", 5, "Downloading FFmpeg (~80MB)...")
+	}
 
-	resp, err := http.Get(downloadURL)
-	if err != nil {
+	if err := d.downloadToFile(downloadURL, tmpFile, emit, 5, 80); err != nil {
 		emit("error", 0, fmt.Sprintf("Download failed: %v", err))
 		return
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		emit("error", 0, fmt.Sprintf("Download failed: HTTP %d", resp.StatusCode))
-		return
-	}
-
-	tmpFile := filepath.Join(d.depsDir, "ffmpeg_download.tmp")
-	out, err := os.Create(tmpFile)
-	if err != nil {
-		emit("error", 0, fmt.Sprintf("Failed to create temp file: %v", err))
-		return
-	}
-
-	totalSize := resp.ContentLength
-	var downloaded int64
-	buf := make([]byte, 256*1024)
-
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			out.Write(buf[:n])
-			downloaded += int64(n)
-			if totalSize > 0 {
-				pct := int(float64(downloaded)/float64(totalSize)*75) + 5
-				emit("downloading", pct, fmt.Sprintf("Downloading... %dMB / %dMB", downloaded/(1024*1024), totalSize/(1024*1024)))
-			}
-		}
-		if readErr != nil {
-			break
-		}
-	}
-	out.Close()
 
 	emit("extracting", 82, "Extracting FFmpeg binary...")
 
@@ -1364,13 +1601,13 @@ func (d *DepsService) downloadFFmpeg() {
 	case strings.HasSuffix(downloadURL, ".zip"):
 		extractErr = d.extractFFmpegTools(tmpFile, "zip", ffmpegBin, ffprobeBin)
 	case strings.HasSuffix(downloadURL, ".gz"):
-		// macOS static builds are single-file ffmpeg only
 		extractErr = d.extractFromGz(tmpFile, ffmpegBin)
 	default:
 		extractErr = os.Rename(tmpFile, ffmpegBin)
 	}
 
 	os.Remove(tmpFile)
+	os.Remove(tmpFile + ".part")
 
 	if extractErr != nil {
 		emit("error", 0, fmt.Sprintf("Extraction failed: %v", extractErr))

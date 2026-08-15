@@ -491,21 +491,14 @@ func mpvPlatformStart(ctx context.Context) error {
 		C.free(unsafe.Pointer(ck))
 		C.free(unsafe.Pointer(cv))
 	}
-	setOpt("vo", "gpu")
-	// mpv 0.35+ defaults gpu-api to Vulkan; with an X11 child window under
-	// XWayland that silently falls back to a detached top-level window.
-	// Force the EGL/OpenGL context so the video actually embeds in-window.
+	// Settings → Player (hwdec, cache, scaling, user config, …)
+	mpvApplyPlayerSettings(setOpt)
+	// Embed-critical: keep video inside the X11 child (not a detached window).
+	// Must stay after user options so a ~/.config/mpv profile cannot break embed.
 	setOpt("gpu-context", "x11egl")
-	setOpt("hwdec", "auto-safe")
-	setOpt("keep-open", "yes")
-	setOpt("idle", "yes")
 	setOpt("osc", "no")
 	setOpt("input-default-bindings", "no")
 	setOpt("input-vo-keyboard", "no")
-	setOpt("cursor-autohide", "always")
-	// Allow the volume property above 100% so the frontend's audio-boost slider
-	// (100-500%) maps directly onto mpv's volume.
-	setOpt("volume-max", "500")
 
 	if C.y_mpv_initialize(h) < 0 {
 		C.y_mpv_destroy(h)

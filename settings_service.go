@@ -211,6 +211,7 @@ func (s *SettingsService) GetSpeedLimit() int64 {
 // GetUISettings returns desktop UI preferences from disk (survives rebuilds).
 func (s *SettingsService) GetUISettings() map[string]interface{} {
 	ui := appconfig.GetUISettings()
+	ps := appconfig.GetPlayerSettings()
 	return map[string]interface{}{
 		"font":                    ui.Font,
 		"font_size":               ui.FontSize,
@@ -223,6 +224,12 @@ func (s *SettingsService) GetUISettings() map[string]interface{} {
 		"mantorex_legal_accepted": ui.MantorexLegalAccepted,
 		// false until the user has saved UI prefs at least once
 		"configured": appconfig.UIConfigured(),
+		// Native player tuning (Settings → Player)
+		"player_hwdec":            ps.Hwdec,
+		"player_cache":            ps.Cache,
+		"player_hq_scale":         ps.HqScale,
+		"player_deinterlace":      ps.Deinterlace,
+		"player_load_user_config": ps.LoadUserConfig,
 	}
 }
 
@@ -270,6 +277,35 @@ func (s *SettingsService) SaveUISettings(settings map[string]interface{}) map[st
 	}
 	if err := appconfig.SetUISettings(ui); err != nil {
 		return map[string]interface{}{"error": err.Error()}
+	}
+
+	// Native player options (optional keys — merge with existing)
+	ps := appconfig.GetPlayerSettings()
+	changed := false
+	if v, ok := settings["player_hwdec"].(string); ok && v != "" {
+		ps.Hwdec = v
+		changed = true
+	}
+	if v, ok := settings["player_cache"].(string); ok && v != "" {
+		ps.Cache = v
+		changed = true
+	}
+	if v, ok := settings["player_hq_scale"].(bool); ok {
+		ps.HqScale = v
+		changed = true
+	}
+	if v, ok := settings["player_deinterlace"].(bool); ok {
+		ps.Deinterlace = v
+		changed = true
+	}
+	if v, ok := settings["player_load_user_config"].(bool); ok {
+		ps.LoadUserConfig = v
+		changed = true
+	}
+	if changed {
+		if err := appconfig.SetPlayerSettings(ps); err != nil {
+			return map[string]interface{}{"error": err.Error()}
+		}
 	}
 	return map[string]interface{}{"status": "saved"}
 }

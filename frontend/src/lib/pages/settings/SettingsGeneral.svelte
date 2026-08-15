@@ -8,6 +8,7 @@
   import ConfirmDialog from '../../components/ConfirmDialog.svelte';
   import AppSelect from '../../components/AppSelect.svelte';
   import FilePicker from '../../components/FilePicker.svelte';
+  import { ensureLinuxMediaDefaults } from '../../utils/torrent';
 
   // License
   let licenseLoading = $state(true);
@@ -29,8 +30,9 @@
   let proxyAddr = $state('');
   let proxyDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  // Format filter (Linux only)
+  // Format filter (Linux only) — default OFF (show HEVC) after linux media defaults
   const isLinux = navigator.platform.indexOf('Linux') !== -1;
+  if (isLinux) ensureLinuxMediaDefaults();
   let formatFilterEnabled = $state(localStorage.getItem('yaria_show_all_formats') !== '1');
 
   // Appearance
@@ -50,6 +52,13 @@
   let mpvReason = $state('');
   let playerBackendSaving = $state(false);
   let playerBackendMsg = $state('');
+  // Native mpv tuning (defaults match previous hardcoded behavior)
+  let playerHwdec = $state('auto-safe');
+  let playerCache = $state('normal');
+  let playerHqScale = $state(false);
+  let playerDeinterlace = $state(false);
+  let playerLoadUserConfig = $state(false);
+  let playerOptsSaving = $state(false);
 
   // App start tab
   let startupTab = $state<'yaria' | 'mantorex'>(
@@ -170,13 +179,38 @@
       ]);
       playerBackend = ui.player_backend === 'libmpv' ? 'libmpv' : 'webview';
       startupTab = ui.startup_tab === 'mantorex' ? 'mantorex' : 'yaria';
-      try { localStorage.setItem('yaria_startup_tab', startupTab); } catch { /* ignore */ }
+      if (ui.player_hwdec === 'no' || ui.player_hwdec === 'auto' || ui.player_hwdec === 'auto-safe') {
+        playerHwdec = ui.player_hwdec;
+      }
+      if (ui.player_cache === 'low' || ui.player_cache === 'normal' || ui.player_cache === 'high') {
+        playerCache = ui.player_cache;
+      }
+      playerHqScale = !!ui.player_hq_scale;
+      playerDeinterlace = !!ui.player_deinterlace;
+      playerLoadUserConfig = !!ui.player_load_user_config;
+      try {
+        localStorage.setItem('yaria_startup_tab', startupTab);
+        localStorage.setItem('yaria_player_backend', playerBackend);
+        if (av?.available) localStorage.setItem('yaria_hevc_ok', '1');
+        else localStorage.removeItem('yaria_hevc_ok');
+      } catch { /* ignore */ }
       mpvAvailable = !!av?.available;
       mpvReason = (av as any)?.reason || '';
     } catch {
       playerBackend = 'webview';
       mpvAvailable = false;
     }
+  }
+
+  async function savePlayerOptions(partial: Record<string, string | boolean>) {
+    playerOptsSaving = true;
+    try {
+      await api.settings.saveUISettings(partial as any);
+      toastSuccess('Player settings saved — applies on next playback');
+    } catch (e: any) {
+      toastError(e?.message || 'Failed to save player settings');
+    }
+    playerOptsSaving = false;
   }
 
   async function setStartupTab(tab: 'yaria' | 'mantorex') {
@@ -218,6 +252,11 @@
       }
       playerBackend = backend;
       await api.settings.saveUISettings({ player_backend: backend });
+      try {
+        localStorage.setItem('yaria_player_backend', backend);
+      } catch {
+        /* ignore */
+      }
       if (backend === 'libmpv') {
         playerBackendMsg = playerBackendMsg || 'Native player selected. Applies on next playback.';
       } else {
@@ -592,7 +631,7 @@
   {#if isLinux}
     <div class="setting-group">
       <div class="setting-label">Video Format Filter</div>
-      <div class="setting-desc">Linux cannot reliably play HEVC/x265/10-bit video. When enabled, these formats are hidden from torrent listings. Disable to show all formats (for downloading or if you have working codec support).</div>
+      <div class="setting-desc">Optional: hide HEVC/x265/10-bit releases (mainly for WebView). Off by default on Linux because Native (libmpv) is the default player and plays these formats. Turn on only if you use WebView and want a cleaner list.</div>
       <label class="toggle-row">
         <input
           type="checkbox"
@@ -710,6 +749,78 @@
       <div class="msg-success" style="margin-top:8px">{playerBackendMsg}</div>
     {/if}
   </div>
+
+  <!-- Native player tuning — only when Native (libmpv) is selected -->
+  {#if playerBackend === 'libmpv'}
+    <div class="setting-group">
+      <div class="setting-label">Player (Native mpv)</div>
+      <div class="setting-desc">
+        Options for the Native player. Defaults match the built-in safe profile.
+        Changes apply the next time you start playback.
+      </div>
+
+      <div class="setting-sublabel">Hardware decoding</div>
+      <AppSelect
+        bind:value={playerHwdec}
+        disabled={playerOptsSaving}
+        options={[
+          { value: 'auto-safe', label: 'Auto (safe) — default' },
+          { value: 'auto', label: 'Auto (aggressive)' },
+          { value: 'no', label: 'Off (software)' },
+        ]}
+        onchange={() => savePlayerOptions({ player_hwdec: playerHwdec })}
+      />
+
+      <div class="setting-sublabel" style="margin-top:12px">Stream cache</div>
+      <div class="text-muted" style="font-size:12px;margin-bottom:6px">
+        Larger cache can reduce freezes on slow torrents (uses more RAM).
+      </div>
+      <AppSelect
+        bind:value={playerCache}
+        disabled={playerOptsSaving}
+        options={[
+          { value: 'low', label: 'Low' },
+          { value: 'normal', label: 'Normal — default' },
+          { value: 'high', label: 'High' },
+        ]}
+        onchange={() => savePlayerOptions({ player_cache: playerCache })}
+      />
+
+      <label class="toggle-row" style="margin-top:14px">
+        <input
+          type="checkbox"
+          bind:checked={playerHqScale}
+          disabled={playerOptsSaving}
+          onchange={() => savePlayerOptions({ player_hq_scale: playerHqScale })}
+        />
+        <span class="text-dim">High-quality scaling (more GPU)</span>
+      </label>
+
+      <label class="toggle-row">
+        <input
+          type="checkbox"
+          bind:checked={playerDeinterlace}
+          disabled={playerOptsSaving}
+          onchange={() => savePlayerOptions({ player_deinterlace: playerDeinterlace })}
+        />
+        <span class="text-dim">Deinterlace</span>
+      </label>
+
+      <label class="toggle-row">
+        <input
+          type="checkbox"
+          bind:checked={playerLoadUserConfig}
+          disabled={playerOptsSaving}
+          onchange={() => savePlayerOptions({ player_load_user_config: playerLoadUserConfig })}
+        />
+        <span class="text-dim">Load user mpv config (~/.config/mpv)</span>
+      </label>
+      <div class="text-muted" style="font-size:12px;margin-top:4px">
+        Off by default. Your system mpv.conf can break in-app embedding (window, controls, keys).
+        Embed-safe options are still forced when enabled.
+      </div>
+    </div>
+  {/if}
 
   <!-- Library Backup -->
   {#if $isPro}
@@ -903,6 +1014,14 @@
 
   .deactivate-btn {
     color: $red !important;
+  }
+
+  .setting-sublabel {
+    font-size: 13px;
+    font-weight: 600;
+    color: $text;
+    margin-top: 4px;
+    margin-bottom: 6px;
   }
 
   .toggle-row {

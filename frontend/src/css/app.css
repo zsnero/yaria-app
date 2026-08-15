@@ -139,7 +139,9 @@ body.player-mode .buffer-bar { transition: opacity 0.3s; }
 
 a { color: inherit; text-decoration: none; }
 ::selection { background: var(--accent); color: #fff; }
-::-webkit-scrollbar { width: 5px; height: 5px; }
+/* Scrollbars hidden — native desktop feel; scrolling still works */
+* { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 /* === Page Transitions (Apple-style spring) === */
 #app {
@@ -388,9 +390,6 @@ html {
 img {
   transition: opacity 0.3s;
 }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
 
 /* Overscroll behavior -- prevent rubber-band on main page, allow in scrollable panels */
 body { overscroll-behavior: none; }

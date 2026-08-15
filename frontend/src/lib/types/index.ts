@@ -117,6 +117,8 @@ export interface StreamStatus {
   peers?: number;
   file_name?: string;
   error?: string;
+  download_rate?: number;
+  rate_str?: string;
 }
 
 export interface DepInfo {

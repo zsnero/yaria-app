@@ -2,6 +2,7 @@
   import { onMount, type Component } from 'svelte';
   import { currentRoute, routeParams, activeTab, mantorexMode, isPro, proChecked, applyUISettings, loadUISettingsFromDisk } from './lib/stores/app';
   import { api } from './lib/api/wails';
+  import { ensureLinuxMediaDefaults } from './lib/utils/torrent';
   import Navbar from './lib/components/Navbar.svelte';
   import Starfield from './lib/components/Starfield.svelte';
   import ProGate from './lib/components/ProGate.svelte';
@@ -176,6 +177,15 @@
       if (mantorexLegalAccepted) {
         try { localStorage.setItem('yaria_mantorex_legal_v1', '1'); } catch { /* ignore */ }
       }
+      try {
+        const backend = ui?.player_backend === 'libmpv' ? 'libmpv' : 'webview';
+        localStorage.setItem('yaria_player_backend', backend);
+      } catch { /* ignore */ }
+      try {
+        const av = await api.mpv.available().catch(() => ({ available: false }));
+        if (av?.available) localStorage.setItem('yaria_hevc_ok', '1');
+        else localStorage.removeItem('yaria_hevc_ok');
+      } catch { /* ignore */ }
     } catch {
       mantorexLegalAccepted = false;
     }
@@ -217,6 +227,7 @@
   }
 
   async function runAppSetup() {
+    ensureLinuxMediaDefaults();
     applyUISettings();
     await loadUISettingsFromDisk();
     // Cold start: honor preferred startup tab when no real route is in the hash
@@ -245,12 +256,18 @@
       const msg = String(data.message || '').toLowerCase();
       // Backend stays silent when nothing to install; still ignore soft "already" lines
       if (msg.includes('already') && !setupHadWork) return;
-      if (phase === 'install' || phase === 'start') {
-        // "start" alone is not enough — require install phase or active download wording
-        if (phase === 'install' || msg.includes('download') || msg.includes('extract') || msg.includes('setting up missing')) {
-          markSetupWork(data.name || '', data.message || '', Number(data.percent) || 0);
+        if (phase === 'install' || phase === 'start') {
+          // "start" alone is not enough — require install phase or active download wording
+          if (
+            phase === 'install' ||
+            msg.includes('download') ||
+            msg.includes('extract') ||
+            msg.includes('setting up missing') ||
+            msg.includes('resuming')
+          ) {
+            markSetupWork(data.name || '', data.message || '', Number(data.percent) || 0);
+          }
         }
-      }
       if (!setupHadWork) return;
       if (data.message) setupMessage = data.message;
       if (data.name) setupName = data.name;
@@ -263,7 +280,7 @@
       const st = String(data.status || '');
       const msg = String(data.message || '').toLowerCase();
       if (st === 'complete' && (msg.includes('already') || !setupHadWork)) return;
-      if (st === 'downloading' || st === 'extracting') {
+      if (st === 'downloading' || st === 'extracting' || msg.includes('resuming')) {
         markSetupWork(data.name || '', data.message || '', Number(data.percent) || 0);
       } else if (st === 'error' && setupHadWork) {
         const name = String(data.name || '').toLowerCase();
