@@ -68,12 +68,12 @@ func mpvApplyPlayerSettings(setOpt func(key, val string)) {
 		setOpt("cache", "yes")
 		setOpt("demuxer-max-bytes", "256MiB")
 		setOpt("demuxer-readahead-secs", "30")
-		setOpt("cache-secs", "60")
+		setOpt("cache-secs", "30")
 	default: // normal — close to mpv defaults with a modest floor
 		setOpt("cache", "yes")
 		setOpt("demuxer-max-bytes", "96MiB")
 		setOpt("demuxer-readahead-secs", "15")
-		setOpt("cache-secs", "30")
+		setOpt("cache-secs", "10")
 	}
 
 	if p.HqScale {
