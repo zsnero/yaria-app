@@ -8,6 +8,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"yaria/pkg/appconfig"
+	"yaria/pkg/mantorex"
 )
 
 // isMetadataFile checks if a filename is a database/metadata file.
@@ -193,6 +194,80 @@ func (s *SettingsService) GetProxy() map[string]interface{} {
 		"type": appconfig.ProxyType(),
 		"addr": appconfig.ProxyAddr(),
 	}
+}
+
+// SaveJackett saves Jackett/Torznab configuration.
+func (s *SettingsService) SaveJackett(enabled bool, urlStr, apiKey string) map[string]interface{} {
+	urlStr = strings.TrimSpace(urlStr)
+	apiKey = strings.TrimSpace(apiKey)
+
+	if err := appconfig.SetJackettEnabled(enabled); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := appconfig.SetJackettURL(urlStr); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if err := appconfig.SetJackettAPIKey(apiKey); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "saved"}
+}
+
+// GetJackett returns the current Jackett/Torznab configuration.
+func (s *SettingsService) GetJackett() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": appconfig.JackettEnabled(),
+		"url":     appconfig.JackettURL(),
+		"api_key": appconfig.JackettAPIKey(),
+	}
+}
+
+// providerDescriptions maps provider names to short descriptions for the UI.
+var providerDescriptions = map[string]string{
+	"ThePirateBay":  "General torrents, most popular public tracker",
+	"1337x":         "General torrents, popular indexed tracker",
+	"YTS":           "Movies, high-quality movie torrents",
+	"TorrentGalaxy": "General torrents, active community",
+	"SolidTorrents": "General torrents, meta-search",
+	"TorrentsCSV":   "General torrents, JSON API, fast",
+	"Nyaa":          "Anime torrents",
+	"EZTV":          "TV shows, classic TV tracker",
+	"LimeTorrents":  "General torrents, large catalog",
+	"Sukebei":       "Adult content (NSFW)",
+	"Bitsearch":     "General torrents, decentralized search",
+	"Knaben":        "General torrents, multi-source aggregator",
+	"BTDigg":        "General torrents, DHT search engine",
+	"TorrentProject":"General torrents, torrent search engine",
+	"Jackett":       "500+ sites via local Jackett instance (requires setup)",
+}
+
+// GetProviders returns all providers with their enabled status for the UI.
+func (s *SettingsService) GetProviders() []map[string]interface{} {
+	enabled := appconfig.EnabledProviders()
+	isDefault := len(enabled) == 0
+	enabledSet := make(map[string]bool, len(enabled))
+	for _, n := range enabled {
+		enabledSet[n] = true
+	}
+
+	var out []map[string]interface{}
+	for _, name := range mantorex.ProviderNames() {
+		isEnabled := (isDefault && name != "Jackett") || enabledSet[name]
+		out = append(out, map[string]interface{}{
+			"name":        name,
+			"enabled":     isEnabled,
+			"description": providerDescriptions[name],
+		})
+	}
+	return out
+}
+
+// SaveProviders saves the list of enabled provider names.
+func (s *SettingsService) SaveProviders(names []string) map[string]interface{} {
+	if err := appconfig.SetEnabledProviders(names); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "saved"}
 }
 
 // SaveSpeedLimit saves the download speed limit in bytes/sec. 0 = unlimited.

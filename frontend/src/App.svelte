@@ -439,7 +439,7 @@
       {:else if needsMantorexLegal}
         <MantorexLegal onAccepted={onMantorexLegalAccepted} />
       {:else if SearchResults}
-        <SearchResults query={params.get('q') || ''} />
+        <SearchResults query={params.get('q') || ''} category={params.get('cat') || ''} />
       {/if}
     {:else if route === '/detail'}
       {#if needsProGate}
