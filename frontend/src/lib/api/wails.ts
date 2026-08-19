@@ -90,6 +90,7 @@ export const settings = {
     player_backend?: string;
     startup_tab?: string;
     mantorex_legal_accepted?: boolean;
+    spinner?: string;
     player_hwdec?: string;
     player_cache?: string;
     player_hq_scale?: boolean;
@@ -105,6 +106,7 @@ export const settings = {
     player_backend?: string;
     startup_tab?: string;
     mantorex_legal_accepted?: boolean;
+    spinner?: string;
     player_hwdec?: string;
     player_cache?: string;
     player_hq_scale?: boolean;

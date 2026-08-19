@@ -4,7 +4,13 @@
   import { isPro, saveUISettings, loadUISettingsFromDisk } from '../../stores/app';
   import { toastSuccess, toastError } from '../../stores/toast';
   import { autoFocus } from '../../actions/index';
-  import Spinner from '../../components/Spinner.svelte';
+  import Spinner, {
+    SPINNER_OPTIONS,
+    normalizeSpinnerVariant,
+    readSpinnerVariant,
+    writeSpinnerVariant,
+    type SpinnerVariant,
+  } from '../../components/Spinner.svelte';
   import ConfirmDialog from '../../components/ConfirmDialog.svelte';
   import AppSelect from '../../components/AppSelect.svelte';
   import FilePicker from '../../components/FilePicker.svelte';
@@ -45,6 +51,7 @@
       ? localStorage.getItem('yaria_ui_blur') === '1'
       : !navigator.platform.includes('Linux')
   );
+  let uiSpinner = $state<SpinnerVariant>(readSpinnerVariant());
 
   // Video player backend (applies to local / torrents / remote)
   let playerBackend = $state<'webview' | 'libmpv'>('webview');
@@ -171,6 +178,16 @@
     saveUISettings({ blur: uiBlur });
   }
 
+  async function setSpinner(id: SpinnerVariant) {
+    uiSpinner = normalizeSpinnerVariant(id);
+    writeSpinnerVariant(uiSpinner);
+    try {
+      await api.settings.saveUISettings({ spinner: uiSpinner });
+    } catch {
+      /* localStorage still applied */
+    }
+  }
+
   async function loadPlayerBackend() {
     try {
       const [ui, av] = await Promise.all([
@@ -276,6 +293,8 @@
     uiScale = '100';
     uiAnimations = false;
     uiBlur = !navigator.platform.includes('Linux');
+    uiSpinner = 'orbit';
+    writeSpinnerVariant('orbit');
     saveUISettings({
       font: uiFont,
       fontSize: uiFontSize,
@@ -283,6 +302,7 @@
       animations: uiAnimations,
       blur: uiBlur,
     });
+    api.settings.saveUISettings({ spinner: 'orbit' }).catch(() => {});
   }
 
   function collectPlayerPositions(): Record<string, string> {
@@ -494,6 +514,17 @@
     uiBlur = localStorage.getItem('yaria_ui_blur')
       ? localStorage.getItem('yaria_ui_blur') === '1'
       : !navigator.platform.includes('Linux');
+    try {
+      const ui = await api.settings.getUISettings();
+      if (ui?.spinner) {
+        uiSpinner = normalizeSpinnerVariant(ui.spinner);
+        writeSpinnerVariant(uiSpinner);
+      } else {
+        uiSpinner = readSpinnerVariant();
+      }
+    } catch {
+      uiSpinner = readSpinnerVariant();
+    }
 
     // Load TMDB key (built-in default is never shown; only user override is)
     api.settings.getTMDBKey().then((tmdbInfo: any) => {
@@ -522,7 +553,7 @@
   <div class="setting-group">
     <div class="setting-label">Yaria Pro License</div>
     {#if licenseLoading}
-      <Spinner size={18} message="Checking..." />
+      <Spinner size={28} message="Checking..." />
     {:else if licenseInfo?.valid && (licenseInfo?.plan === 'pro' || licenseInfo?.plan === 'trial')}
       <div class="license-info">
         <div class="license-badge-row">
@@ -679,6 +710,28 @@
       <input type="checkbox" bind:checked={uiBlur} onchange={handleBlurChange} />
       <span class="text-dim">Enable glassmorphism (blur effects)</span>
     </label>
+
+    <div class="spinner-picker">
+      <label class="appearance-label">Loading spinner</label>
+      <p class="spinner-picker-desc">Preview each style, then click to select. Default is Orbital Halo.</p>
+      <div class="spinner-grid">
+        {#each SPINNER_OPTIONS as opt (opt.id)}
+          <button
+            type="button"
+            class="spinner-card"
+            class:active={uiSpinner === opt.id}
+            onclick={() => setSpinner(opt.id)}
+          >
+            <div class="spinner-card-preview">
+              <Spinner size={52} variant={opt.id} />
+            </div>
+            <span class="spinner-card-label">{opt.label}</span>
+            <span class="spinner-card-desc">{opt.desc}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+
     <div class="reset-row">
       <button class="btn btn-ghost btn-sm reset-btn" onclick={resetUIDefaults}>Reset to Defaults</button>
     </div>
@@ -1072,6 +1125,76 @@
     font-size: 13px;
     color: $text-dim;
     min-width: 35px;
+  }
+
+  .spinner-picker {
+    margin-top: 18px;
+  }
+
+  .spinner-picker-desc {
+    font-size: 12px;
+    color: $text-muted;
+    margin: 0 0 10px;
+    line-height: 1.45;
+  }
+
+  .spinner-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 10px;
+  }
+
+  .spinner-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 8px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+
+    &:hover {
+      border-color: rgba($accent, 0.35);
+      background: rgba($accent, 0.06);
+    }
+
+    &.active {
+      border-color: rgba($accent, 0.65);
+      background: rgba($accent, 0.1);
+      box-shadow: 0 0 0 1px rgba($accent, 0.2), 0 0 20px rgba($accent, 0.12);
+    }
+  }
+
+  .spinner-card-preview {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    :global(.spinner-container) {
+      padding: 0;
+      gap: 0;
+    }
+  }
+
+  .spinner-card-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text;
+    text-align: center;
+  }
+
+  .spinner-card-desc {
+    font-size: 10px;
+    color: $text-muted;
+    text-align: center;
+    line-height: 1.3;
   }
 
   .reset-row {

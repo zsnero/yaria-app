@@ -234,7 +234,7 @@
   </div>
 
   {#if loading && downloads.length === 0}
-    <Spinner message="Loading downloads..." />
+    <Spinner size={48} message="Loading downloads..." />
   {:else if isEmpty}
     <div class="no-results">
       No downloads yet. Go to the Yaria tab to start downloading.

@@ -323,18 +323,16 @@ input[type="range"] {
   border: 2px solid rgba(255, 255, 255, 0.1);
   border-top-color: $accent;
   border-radius: 50%;
-  animation: yaria-spin 0.75s linear infinite;
+  animation: yaria-spin 1.1s linear infinite;
   will-change: transform;
 }
 
-// SVG spinner used by Spinner.svelte
-// CSS animation as backup; SMIL animateTransform in the SVG is primary for WebKitGTK
+// SVG spinner shell — rotation is JS rAF in Spinner.svelte (WebKitGTK-safe).
+// Do NOT CSS-animate .spinner-svg or it doubles with rAF (looks hyper-fast).
 .spinner-svg {
   display: block;
   overflow: visible;
-  animation: yaria-spin 0.75s linear infinite;
   transform-origin: 50% 50%;
-  will-change: transform;
 }
 .spinner-track {
   stroke: rgba(255, 255, 255, 0.12);
@@ -427,21 +425,20 @@ img { transition: opacity 0.3s; }
 
 // UI Customization: kill decorative motion, but NEVER stop loaders
 html.no-animations {
-  *:not(.spinner):not(.spinner-svg):not(.spinner-arc):not(.spinner-container):not(.setup-spinner),
-  *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner)::before,
-  *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner)::after {
+  *:not(.spinner):not(.spinner-svg):not(.spinner-arc):not(.spinner-container):not(.setup-spinner):not(.spin-layer):not(.orbit-core):not(.sing-glow):not(.spinner-classic),
+  *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner):not(.spin-layer):not(.orbit-core):not(.sing-glow)::before,
+  *:not(.spinner):not(.spinner-svg):not(.spinner-container):not(.setup-spinner):not(.spin-layer):not(.orbit-core):not(.sing-glow)::after {
     animation-duration: 0s !important;
     animation-delay: 0s !important;
     transition-duration: 0s !important;
     transition-delay: 0s !important;
   }
 
-  // Force loaders to keep spinning (including setup banner)
+  // Legacy CSS ring + setup banner only (SVG variants use rAF)
   .spinner,
-  .spinner-svg,
   .setup-spinner {
-    animation: yaria-spin 0.75s linear infinite !important;
-    animation-duration: 0.75s !important;
+    animation: yaria-spin 1.1s linear infinite !important;
+    animation-duration: 1.1s !important;
     animation-delay: 0s !important;
   }
 }

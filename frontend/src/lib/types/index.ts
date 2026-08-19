@@ -119,6 +119,8 @@ export interface StreamStatus {
   error?: string;
   download_rate?: number;
   rate_str?: string;
+  /** Full estimated duration in seconds (torrent size÷bitrate / probe) */
+  duration?: number;
 }
 
 export interface DepInfo {

@@ -134,6 +134,7 @@ export async function loadUISettingsFromDisk(): Promise<void> {
           scale: local.scale,
           animations: local.animations,
           blur: local.blur,
+          spinner: localStorage.getItem('yaria_spinner') || 'orbit',
         });
       } catch { /* ignore */ }
       return;
@@ -152,6 +153,10 @@ export async function loadUISettingsFromDisk(): Promise<void> {
     try {
       const tab = (res as any).startup_tab === 'mantorex' ? 'mantorex' : 'yaria';
       localStorage.setItem('yaria_startup_tab', tab);
+      if (res.spinner) {
+        localStorage.setItem('yaria_spinner', String(res.spinner));
+        window.dispatchEvent(new CustomEvent('yaria-spinner-change', { detail: res.spinner }));
+      }
     } catch { /* ignore */ }
   } catch {
     // Backend not ready — keep localStorage values

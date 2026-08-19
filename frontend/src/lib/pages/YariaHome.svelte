@@ -476,7 +476,7 @@
     <!-- Deps status -->
     {#if !depsReady && !depsError}
       <div class="download-deps-status">
-        <Spinner size={18} />
+        <Spinner size={28} />
         <span class="deps-msg">{depsMessage}</span>
       </div>
     {/if}

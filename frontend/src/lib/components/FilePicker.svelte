@@ -307,7 +307,7 @@
         <div class="fp-list">
           {#if loading}
             <div class="fp-list-msg">
-              <Spinner size={20} message="Loading..." />
+              <Spinner size={32} message="Loading..." />
             </div>
           {:else if error}
             <div class="fp-list-msg fp-error">{error}</div>

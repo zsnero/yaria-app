@@ -297,6 +297,7 @@ func (s *SettingsService) GetUISettings() map[string]interface{} {
 		"player_backend":          ui.PlayerBackend,
 		"startup_tab":             ui.StartupTab,
 		"mantorex_legal_accepted": ui.MantorexLegalAccepted,
+		"spinner":                 ui.Spinner,
 		// false until the user has saved UI prefs at least once
 		"configured": appconfig.UIConfigured(),
 		// Native player tuning (Settings → Player)
@@ -349,6 +350,12 @@ func (s *SettingsService) SaveUISettings(settings map[string]interface{}) map[st
 	}
 	if v, ok := settings["mantorex_legal_accepted"].(bool); ok {
 		ui.MantorexLegalAccepted = v
+	}
+	if v, ok := settings["spinner"].(string); ok && v != "" {
+		switch v {
+		case "orbit", "singularity", "radar", "warp", "classic":
+			ui.Spinner = v
+		}
 	}
 	if err := appconfig.SetUISettings(ui); err != nil {
 		return map[string]interface{}{"error": err.Error()}
