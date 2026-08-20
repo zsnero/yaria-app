@@ -235,6 +235,18 @@
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
 
+    // Browser extension → focus app / open Downloads
+    setupCleanups.push(api.events.on('extension-focus', (data: any) => {
+      const target = String(data?.target || 'downloads');
+      if (target === 'downloads' || target === 'yaria') {
+        window.location.hash = '#/yaria/downloads';
+      } else if (target === 'settings') {
+        window.location.hash = '#/settings';
+      } else if (target === 'home') {
+        window.location.hash = '#/yaria';
+      }
+    }));
+
     await loadProModules();
 
     try {

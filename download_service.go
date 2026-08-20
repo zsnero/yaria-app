@@ -34,8 +34,10 @@ type activeDownload struct {
 	Percent         float64
 	Speed           string
 	ETA             string
-	Error           string
+	Error           string // UI-facing; only set on real failure
+	lastYtdlpErr    string // non-fatal stderr ERROR: lines kept for final failure message
 	StartedAt       string
+	startedUnix     int64 // monotonic order key (ms) — keeps UI list stable
 	cancel          context.CancelFunc
 	lastEmit        time.Time
 	pipeWriter      *io.PipeWriter
@@ -45,6 +47,7 @@ type activeDownload struct {
 	AudioFormat     string
 	ContainerFormat string
 	FilePath        string
+	Referer         string // page URL for hotlink CDNs (from browser extension)
 	// Multi-file tracking (video+audio separate downloads)
 	fileIndex   int     // 0 = first file, 1 = second file
 	fileParts   int     // total parts (usually 2 for video+audio)
@@ -479,6 +482,11 @@ func splitFormats(formats []downloader.Format) (videoFmts, audioFmts []map[strin
 // Returns immediately with the download ID. If the max concurrent limit is
 // reached, the download is placed in a wait queue.
 func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, audioOnly bool, audioFormat string, containerFormat string) map[string]interface{} {
+	return d.startDownload(rawURL, "", "", resolution, downloadDir, audioOnly, audioFormat, containerFormat)
+}
+
+// startDownload is the shared implementation; title/referer may be preset (extension).
+func (d *DownloadService) startDownload(rawURL, title, referer, resolution, downloadDir string, audioOnly bool, audioFormat string, containerFormat string) map[string]interface{} {
 	if d.dl == nil {
 		return map[string]interface{}{"error": "downloader not initialized"}
 	}
@@ -500,18 +508,25 @@ func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, 
 	id := fmt.Sprintf("dl_%d", d.nextID)
 
 	thumb := d.getThumbnailURL(url)
+	displayTitle := strings.TrimSpace(title)
+	if displayTitle == "" {
+		displayTitle = url
+	}
+	now := time.Now()
 	ad := &activeDownload{
 		ID:              id,
 		URL:             url,
-		Title:           url,
+		Title:           displayTitle,
 		Thumbnail:       thumb,
 		Status:          "queued",
-		StartedAt:       time.Now().Format("2006-01-02 15:04"),
+		StartedAt:       now.Format("2006-01-02 15:04:05"),
+		startedUnix:     now.UnixMilli(),
 		Resolution:      resolution,
 		DownloadDir:     downloadDir,
 		AudioOnly:       audioOnly,
 		AudioFormat:     audioFormat,
 		ContainerFormat: containerFormat,
+		Referer:         strings.TrimSpace(referer),
 	}
 	d.downloads[id] = ad
 
@@ -522,9 +537,20 @@ func (d *DownloadService) StartDownload(rawURL, resolution, downloadDir string, 
 		return map[string]interface{}{"id": id, "status": "queued"}
 	}
 	d.running++
+	// Stagger parallel starts slightly so the same CDN is less likely to reset all at once
+	delay := time.Duration(d.running-1) * 400 * time.Millisecond
 	d.mu.Unlock()
 
-	go d.runDownload(id, url, resolution, downloadDir, audioOnly, audioFormat, containerFormat)
+	go func() {
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-d.ctx.Done():
+				return
+			}
+		}
+		d.runDownload(id, url, resolution, downloadDir, audioOnly, audioFormat, containerFormat)
+	}()
 
 	return map[string]interface{}{
 		"id":     id,
@@ -549,18 +575,34 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		return
 	}
 
-	// Fetch metadata first
+	// Fetch metadata first (skipped / soft-fail for direct file URLs from extension)
 	d.updateDownload(id, "metadata", 0, "", "", "")
-	_, title, err := d.dl.GetMetadata([]string{url})
-	if err != nil {
-		_, userMsg := classifyError(err.Error())
-		d.updateDownload(id, "error", 0, "", "", userMsg)
-		return
+	directFile := downloader.IsDirectMediaURL(url)
+	if directFile {
+		// Keep extension-provided title when present
+		d.mu.Lock()
+		if ad.Title == "" || ad.Title == ad.URL {
+			ad.Title = titleFromMediaURL(url)
+		}
+		d.mu.Unlock()
+	} else {
+		_, title, err := d.dl.GetMetadata([]string{url})
+		if err != nil {
+			_, userMsg := classifyError(err.Error())
+			// Friendlier hint when site extractor is broken but extension may have directs
+			if strings.Contains(strings.ToLower(err.Error()), "json") ||
+				strings.Contains(strings.ToLower(userMsg), "json") {
+				userMsg = "Site extractor failed. In the extension, pick a quality (not only Best/yt-dlp), or update yt-dlp."
+			}
+			d.updateDownload(id, "error", 0, "", "", userMsg)
+			return
+		}
+		d.mu.Lock()
+		if title != "" {
+			ad.Title = title
+		}
+		d.mu.Unlock()
 	}
-
-	d.mu.Lock()
-	ad.Title = title
-	d.mu.Unlock()
 
 	// Resolve destination directory (expand ~ since Go doesn't do shell expansion)
 	dest := expandTilde(downloadDir)
@@ -579,6 +621,9 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	origAudioFmt := d.cfg.AudioFormat
 	origTemplate := d.cfg.OutputTemplate
 	origContainer := d.cfg.ContainerFormat
+	origReferer := d.cfg.Referer
+	origAria := d.cfg.UseAria2c
+	ref := ad.Referer
 	if resolution != "" {
 		d.cfg.Resolution = resolutionToFormat(resolution)
 	}
@@ -588,6 +633,9 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	}
 	d.cfg.ContainerFormat = containerFormat
 	d.cfg.OutputTemplate = ".%(title)s/%(title)s.%(ext)s"
+	d.cfg.Referer = ref
+	// aria2 stays enabled when configured; downloader tries aria2 first on
+	// direct files and retries without it if the CDN resets the connection.
 	d.mu.Unlock()
 
 	// Pipe stdout/stderr through a progress parser
@@ -613,6 +661,8 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	d.cfg.AudioFormat = origAudioFmt
 	d.cfg.OutputTemplate = origTemplate
 	d.cfg.ContainerFormat = origContainer
+	d.cfg.Referer = origReferer
+	d.cfg.UseAria2c = origAria
 	d.cfg.Stdout = io.Discard
 	d.cfg.Stderr = io.Discard
 	d.mu.Unlock()
@@ -629,10 +679,16 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		if dlErr != nil {
 			errMsg = dlErr.Error()
 		}
-		// Prefer a more specific ERROR line captured from yt-dlp stderr
+		// Prefer a more specific ERROR line captured from yt-dlp stderr (retries etc.)
 		d.mu.Lock()
-		if ad != nil && ad.Error != "" && (errMsg == "download failed" || strings.Contains(errMsg, "all download attempts")) {
-			errMsg = ad.Error
+		if ad != nil {
+			captured := ad.lastYtdlpErr
+			if captured == "" {
+				captured = ad.Error
+			}
+			if captured != "" && (errMsg == "download failed" || strings.Contains(errMsg, "all download attempts")) {
+				errMsg = captured
+			}
 		}
 		d.mu.Unlock()
 		errType, userMsg := classifyError(errMsg)
@@ -659,8 +715,10 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	if ad != nil {
 		title := ad.Title
 		started := time.Time{}
-		if t, err := time.ParseInLocation("2006-01-02 15:04", ad.StartedAt, time.Local); err == nil {
-			started = t.Add(-2 * time.Minute) // small slack for clock skew
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", ad.StartedAt, time.Local); err == nil {
+			started = t.Add(-2 * time.Minute)
+		} else if t, err := time.ParseInLocation("2006-01-02 15:04", ad.StartedAt, time.Local); err == nil {
+			started = t.Add(-2 * time.Minute) // legacy minute-only timestamps
 		}
 		ad.FilePath = findDownloadVideo(dest, title, started)
 	}
@@ -744,10 +802,16 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 	}
 	d.mu.Unlock()
 
-	// Sort active downloads by StartedAt descending for stable ordering.
-	// Map iteration is random in Go, so without sorting the UI jumps around.
-	sort.Slice(active, func(i, j int) bool {
-		return active[i].StartedAt > active[j].StartedAt
+	// Stable newest-first order (map iteration is random in Go).
+	// Tie-break with id so equal timestamps never shuffle the UI.
+	sort.SliceStable(active, func(i, j int) bool {
+		if active[i].startedUnix != active[j].startedUnix {
+			return active[i].startedUnix > active[j].startedUnix
+		}
+		if active[i].StartedAt != active[j].StartedAt {
+			return active[i].StartedAt > active[j].StartedAt
+		}
+		return active[i].ID > active[j].ID
 	})
 
 	result := make([]map[string]interface{}, 0, len(active))
@@ -763,12 +827,19 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 			"eta":          ad.ETA,
 			"error":        ad.Error,
 			"started_at":   ad.StartedAt,
+			"started_unix": ad.startedUnix,
 			"file_path":    ad.FilePath,
 			"download_dir": ad.DownloadDir,
 		})
 	}
 
 	// Add stored history (completed/errored downloads from previous sessions)
+	type histRow struct {
+		m map[string]interface{}
+		t string
+		id string
+	}
+	var history []histRow
 	if d.store != nil {
 		for _, r := range d.store.GetAll() {
 			if !activeIDs[r.ID] {
@@ -777,21 +848,34 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 				if r.FilePath != "" {
 					dlDir = filepath.Dir(filepath.Dir(r.FilePath)) // parent of title folder
 				}
-				result = append(result, map[string]interface{}{
-					"id":           r.ID,
-					"url":          r.URL,
-					"title":        r.Title,
-					"thumbnail":    r.Thumbnail,
-					"status":       r.Status,
-					"percent":      r.Percent,
-					"error":        r.Error,
-					"started_at":   r.StartedAt,
-					"file_path":    r.FilePath,
-					"file_size":    r.FileSize,
-					"download_dir": dlDir,
+				history = append(history, histRow{
+					t:  r.StartedAt,
+					id: r.ID,
+					m: map[string]interface{}{
+						"id":           r.ID,
+						"url":          r.URL,
+						"title":        r.Title,
+						"thumbnail":    r.Thumbnail,
+						"status":       r.Status,
+						"percent":      r.Percent,
+						"error":        r.Error,
+						"started_at":   r.StartedAt,
+						"file_path":    r.FilePath,
+						"file_size":    r.FileSize,
+						"download_dir": dlDir,
+					},
 				})
 			}
 		}
+	}
+	sort.SliceStable(history, func(i, j int) bool {
+		if history[i].t != history[j].t {
+			return history[i].t > history[j].t
+		}
+		return history[i].id > history[j].id
+	})
+	for _, h := range history {
+		result = append(result, h.m)
 	}
 	return result
 }
@@ -1186,6 +1270,27 @@ func (d *DownloadService) DetectPlaylist(rawURL string) map[string]interface{} {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+// titleFromMediaURL builds a readable title from a direct file URL path.
+func titleFromMediaURL(raw string) string {
+	u := strings.TrimSpace(raw)
+	path := u
+	if i := strings.Index(path, "://"); i >= 0 {
+		path = path[i+3:]
+		if j := strings.Index(path, "/"); j >= 0 {
+			path = path[j:]
+		}
+	}
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	base := filepath.Base(path)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	if base == "" || base == "/" || base == "." {
+		return "Download"
+	}
+	return base
+}
+
 // classifyError categorizes a download error message into a type and
 // user-friendly message to help the user understand what went wrong.
 func classifyError(errMsg string) (string, string) {
@@ -1207,6 +1312,9 @@ func classifyError(errMsg string) (string, string) {
 		return "unavailable", "This video is unavailable (private, deleted, or removed)."
 	case strings.Contains(msg, "unsupported url"):
 		return "unsupported", "This URL is not supported."
+	case strings.Contains(msg, "connection reset") || strings.Contains(msg, "connection aborted") ||
+		strings.Contains(msg, "ssl") || strings.Contains(msg, "tls"):
+		return "network", "Connection blocked by the site/CDN. Try another quality, or open the video in your browser first (cookies), then retry."
 	case strings.Contains(msg, "network") || strings.Contains(msg, "connection") || strings.Contains(msg, "timeout"):
 		return "network", "Network error. Check your internet connection."
 	case strings.Contains(msg, "age") || strings.Contains(msg, "restricted"):
@@ -1255,16 +1363,29 @@ func resolutionToFormat(res string) string {
 func (d *DownloadService) updateDownload(id, status string, percent float64, speed, eta, errMsg string) {
 	d.mu.Lock()
 	ad, ok := d.downloads[id]
+	emitError := ""
 	if ok {
 		ad.Status = status
 		ad.Percent = percent
 		ad.Speed = speed
 		ad.ETA = eta
-		// Don't wipe a more specific yt-dlp ERROR captured during download
-		// when progress updates pass an empty errMsg.
-		if errMsg != "" || status == "error" || status == "cancelled" || status == "complete" {
+		switch status {
+		case "error":
 			ad.Error = errMsg
+		case "complete", "cancelled":
+			ad.Error = ""
+		case "downloading", "processing", "metadata", "queued":
+			// Never surface mid-download yt-dlp retry noise on the UI
+			if errMsg != "" {
+				ad.lastYtdlpErr = errMsg
+			}
+			ad.Error = ""
+		default:
+			if errMsg != "" {
+				ad.Error = errMsg
+			}
 		}
+		emitError = ad.Error
 	}
 	title := ""
 	thumbnail := ""
@@ -1326,7 +1447,7 @@ func (d *DownloadService) updateDownload(id, status string, percent float64, spe
 			"percent": percent,
 			"speed":   speed,
 			"eta":     eta,
-			"error":   errMsg,
+			"error":   emitError,
 			"title":   title,
 		})
 
@@ -1340,43 +1461,74 @@ func (d *DownloadService) updateDownload(id, status string, percent float64, spe
 }
 
 // parseProgress reads yt-dlp / aria2c output byte-by-byte and extracts progress.
-// Handles multi-file downloads (video+audio) by combining progress.
+// Handles HLS fragments, progressive files, and video+audio dual downloads.
+//
+// Important: yt-dlp prints "100% of … in 00:00:01" after EVERY HLS fragment.
+// Treating those as job progress made the UI jump to 100% while still downloading.
 func (d *DownloadService) parseProgress(ctx context.Context, id string, reader io.Reader) {
-	ytdlpProgressRegex := regexp.MustCompile(`\[download\]\s+(\d+\.?\d*)%`)
-	aria2cFullRegex := regexp.MustCompile(`\[#[0-9a-f]+\s+.*?\((\d+)%\).*?DL:([0-9.]+\S+)(?:.*?ETA:(\S+))?`)
+	// Live: "[download]  45.2% of ~120.00MiB at  2.5MiB/s ETA 00:30"
+	ytdlpLiveRegex := regexp.MustCompile(`\[download\]\s+(\d+\.?\d*)%\s+of\s+~?\s*([\d.]+(?:[KMG]i?B)?)\s+at\s+(\S+)(?:\s+ETA\s+(\S+))?`)
+	// Done summary (per fragment or finished stream): "... 100% of 1.50MiB in 00:00:01"
+	ytdlpDoneRegex := regexp.MustCompile(`\[download\]\s+(\d+\.?\d*)%\s+of\s+~?\s*([\d.]+)([KMG]i?B)\s+in\s+`)
+	fragRegex := regexp.MustCompile(`(?:frag|fragment)\s+(\d+)\s*/\s*(\d+)`)
+	ytdlpBareRegex := regexp.MustCompile(`\[download\]\s+(\d+\.?\d*)%`)
+	aria2cFullRegex := regexp.MustCompile(`\[#[0-9a-fA-F]+\s+.*?\((\d+)%\).*?DL:([0-9.]+\S+)(?:.*?ETA:(\S+))?`)
 	aria2cProgressRegex := regexp.MustCompile(`\((\d+)%\)`)
 	speedRegex := regexp.MustCompile(`(?:DL:|at\s+)(\d+\.?\d*\S+/s)`)
 	etaRegex := regexp.MustCompile(`ETA[:\s]+(\S+)`)
+	aria2DLRegex := regexp.MustCompile(`DL:([0-9.]+\S+)`)
 
-	// Track multi-file progress (video+audio are downloaded separately)
-	fileIndex := 0
-	lastRawPercent := 0.0
-	highWaterMark := 0.0 // monotonic: overall progress never goes backwards
+	streamIndex := 0 // 0 = first stream (video), 1 = audio after a real large finish
+	highWaterMark := 0.0
+	sawLiveProgress := false
 
-	computeOverall := func(rawPercent float64) float64 {
-		// Detect file transition: progress resets near 0 after being high
-		if rawPercent < 5 && lastRawPercent > 80 {
-			fileIndex++
+	clamp := func(p float64) float64 {
+		if p < 0 {
+			return 0
 		}
-		lastRawPercent = rawPercent
-
-		// For 2-part downloads (video+audio), first file = 0-80%, second = 80-100%
-		// Video is typically 80% of total size, audio is 20%
-		var overall float64
-		switch fileIndex {
-		case 0:
-			overall = rawPercent * 0.8
-		case 1:
-			overall = 80 + rawPercent*0.2
-		default:
-			overall = rawPercent
+		// Keep headroom until process exit marks complete — avoid sticky fake 100%
+		if p > 99.4 {
+			return 99.4
 		}
+		return p
+	}
 
-		// Never go backwards (aria2c can report fluctuating progress)
+	raise := func(overall float64, speed, eta string) {
+		overall = clamp(overall)
 		if overall > highWaterMark {
 			highWaterMark = overall
 		}
-		return highWaterMark
+		d.updateDownload(id, "downloading", highWaterMark, speed, eta, "")
+	}
+
+	sizeToBytes := func(numStr, unit string) float64 {
+		n, _ := strconv.ParseFloat(numStr, 64)
+		u := strings.ToUpper(unit)
+		switch {
+		case strings.HasPrefix(u, "GI"):
+			return n * 1024 * 1024 * 1024
+		case strings.HasPrefix(u, "G"):
+			return n * 1000 * 1000 * 1000
+		case strings.HasPrefix(u, "MI"):
+			return n * 1024 * 1024
+		case strings.HasPrefix(u, "M"):
+			return n * 1000 * 1000
+		case strings.HasPrefix(u, "KI"):
+			return n * 1024
+		case strings.HasPrefix(u, "K"):
+			return n * 1000
+		default:
+			return n
+		}
+	}
+
+	// Single stream: use raw %. After a second stream starts, reserve headroom
+	// so video@100% isn't shown as fully done while audio still runs.
+	mapStream := func(raw float64) float64 {
+		if streamIndex <= 0 {
+			return raw
+		}
+		return 85 + raw*0.14
 	}
 
 	processLine := func(line string) {
@@ -1384,66 +1536,162 @@ func (d *DownloadService) parseProgress(ctx context.Context, id string, reader i
 			return
 		}
 
-		var rawPercent float64
-		var speed, eta string
-		matched := false
+		if strings.Contains(line, "[Merger]") || strings.Contains(line, "[ExtractAudio]") ||
+			strings.Contains(line, "[FixupM3u8]") || strings.Contains(line, "[Fixup]") ||
+			strings.Contains(line, "[ffmpeg]") || strings.Contains(line, "[MoveFiles]") {
+			if highWaterMark < 99 {
+				highWaterMark = 99
+			}
+			d.updateDownload(id, "processing", highWaterMark, "", "", "")
+			return
+		}
 
-		// Try aria2c full format first: [#hex SIZE/TOTAL(PCT%) CN:N DL:SPEED ETA:TIME]
+		// yt-dlp often prints ERROR: on fragment/format retries while still succeeding.
+		// Keep for final failure text only — do not flip the UI to an error state.
+		if strings.HasPrefix(strings.TrimSpace(line), "ERROR:") {
+			msg := strings.TrimSpace(line)
+			// Ignore empty "ERROR:" noise
+			if len(msg) > len("ERROR:") {
+				d.mu.Lock()
+				if ad, ok := d.downloads[id]; ok {
+					ad.lastYtdlpErr = msg
+					// Ensure UI does not keep showing a stale error
+					ad.Error = ""
+				}
+				d.mu.Unlock()
+			}
+			return
+		}
+
+		// Next Destination after first stream mostly done ≈ audio track
+		if strings.Contains(line, "[download] Destination:") && sawLiveProgress && highWaterMark >= 80 {
+			if streamIndex < 1 {
+				streamIndex = 1
+				// Cap first-stream mark so UI doesn't sit at ~100% during audio
+				if highWaterMark > 88 {
+					highWaterMark = 88
+				}
+			}
+		}
+
+		var speed, eta string
+		if sm := speedRegex.FindStringSubmatch(line); len(sm) >= 2 {
+			speed = sm[1]
+		}
+		if em := etaRegex.FindStringSubmatch(line); len(em) >= 2 {
+			eta = em[1]
+		}
+
+		// 1) frag N/M — best signal for HLS/DASH
+		if fm := fragRegex.FindStringSubmatch(line); len(fm) >= 3 {
+			cur, _ := strconv.ParseFloat(fm[1], 64)
+			total, _ := strconv.ParseFloat(fm[2], 64)
+			if total > 0 && cur >= 0 {
+				raw := (cur / total) * 100
+				if lm := ytdlpLiveRegex.FindStringSubmatch(line); len(lm) >= 2 {
+					if p, err := strconv.ParseFloat(lm[1], 64); err == nil && p >= 0 && p <= 100 {
+						// Smooth within the current fragment slot
+						raw = ((cur - 1) / total * 100) + (p/100.0)*(100.0/total)
+						if raw < 0 {
+							raw = (cur / total) * 100
+						}
+					}
+					if len(lm) >= 4 && lm[3] != "" {
+						speed = lm[3]
+						if !strings.HasSuffix(strings.ToLower(speed), "/s") {
+							speed += "/s"
+						}
+					}
+					if len(lm) >= 5 && lm[4] != "" {
+						eta = lm[4]
+					}
+				}
+				sawLiveProgress = true
+				raise(mapStream(raw), speed, eta)
+				return
+			}
+		}
+
+		// 2) Live yt-dlp line (has "at …", not finished "in …")
+		if lm := ytdlpLiveRegex.FindStringSubmatch(line); len(lm) >= 2 {
+			raw, _ := strconv.ParseFloat(lm[1], 64)
+			if len(lm) >= 4 && lm[3] != "" {
+				speed = lm[3]
+				if !strings.HasSuffix(strings.ToLower(speed), "/s") {
+					speed += "/s"
+				}
+			}
+			if len(lm) >= 5 && lm[4] != "" {
+				eta = lm[4]
+			}
+			sawLiveProgress = true
+			raise(mapStream(raw), speed, eta)
+			return
+		}
+
+		// 3) Completed-item lines: ignore tiny fragment finishes
+		if dm := ytdlpDoneRegex.FindStringSubmatch(line); len(dm) >= 4 {
+			raw, _ := strconv.ParseFloat(dm[1], 64)
+			bytes := sizeToBytes(dm[2], dm[3])
+			if bytes < 3*1024*1024 {
+				if !sawLiveProgress && speed != "" {
+					d.updateDownload(id, "downloading", highWaterMark, speed, eta, "")
+				}
+				return
+			}
+			if raw >= 99.0 {
+				raise(mapStream(100), speed, eta)
+				if streamIndex < 1 {
+					streamIndex = 1
+				}
+			}
+			return
+		}
+
+		// 4) aria2c full status line
 		if am := aria2cFullRegex.FindStringSubmatch(line); len(am) >= 2 {
-			rawPercent, _ = strconv.ParseFloat(am[1], 64)
+			raw, _ := strconv.ParseFloat(am[1], 64)
 			if len(am) >= 3 && am[2] != "" {
-				speed = am[2] + "/s"
+				speed = am[2]
+				if !strings.HasSuffix(speed, "/s") {
+					speed += "/s"
+				}
 			}
 			if len(am) >= 4 && am[3] != "" {
 				eta = am[3]
 			}
-			matched = true
-		} else if matches := ytdlpProgressRegex.FindStringSubmatch(line); len(matches) >= 2 {
-			rawPercent, _ = strconv.ParseFloat(matches[1], 64)
-			matched = true
-		} else if matches := aria2cProgressRegex.FindStringSubmatch(line); len(matches) >= 2 {
-			rawPercent, _ = strconv.ParseFloat(matches[1], 64)
-			matched = true
+			sawLiveProgress = true
+			raise(mapStream(raw), speed, eta)
+			return
 		}
 
-		if matched {
-			if speed == "" {
-				if sm := speedRegex.FindStringSubmatch(line); len(sm) >= 2 {
-					speed = sm[1]
-				}
-				// aria2c DL: without /s
+		// 5) aria2 bare % only on aria-looking lines
+		if strings.Contains(line, "DL:") || strings.Contains(line, "CN:") {
+			if matches := aria2cProgressRegex.FindStringSubmatch(line); len(matches) >= 2 {
+				raw, _ := strconv.ParseFloat(matches[1], 64)
 				if speed == "" {
-					dlRegex := regexp.MustCompile(`DL:([0-9.]+\S+)`)
-					if dm := dlRegex.FindStringSubmatch(line); len(dm) >= 2 {
+					if dm := aria2DLRegex.FindStringSubmatch(line); len(dm) >= 2 {
 						speed = dm[1] + "/s"
 					}
 				}
+				sawLiveProgress = true
+				raise(mapStream(raw), speed, eta)
+				return
 			}
-			if eta == "" {
-				if em := etaRegex.FindStringSubmatch(line); len(em) >= 2 {
-					eta = em[1]
+		}
+
+		// 6) Bare yt-dlp % only after real live progress (skip fake 100% dumps)
+		if sawLiveProgress {
+			if matches := ytdlpBareRegex.FindStringSubmatch(line); len(matches) >= 2 {
+				if strings.Contains(line, " in ") && strings.Contains(line, " of ") {
+					return
 				}
+				raw, _ := strconv.ParseFloat(matches[1], 64)
+				if raw >= 99.9 && !strings.Contains(line, "at ") && !strings.Contains(strings.ToUpper(line), "ETA") {
+					return
+				}
+				raise(mapStream(raw), speed, eta)
 			}
-			overall := computeOverall(rawPercent)
-			d.updateDownload(id, "downloading", overall, speed, eta, "")
-			return
-		}
-
-		// Detect post-processing phases
-		if strings.Contains(line, "[Merger]") || strings.Contains(line, "[ExtractAudio]") ||
-			strings.Contains(line, "[FixupM3u8]") || strings.Contains(line, "[ffmpeg]") ||
-			strings.Contains(line, "[MoveFiles]") {
-			d.updateDownload(id, "processing", 99, "", "", "")
-			return
-		}
-
-		// Remember yt-dlp ERROR lines so we can surface them if the download fails
-		if strings.HasPrefix(strings.TrimSpace(line), "ERROR:") {
-			d.mu.Lock()
-			if ad, ok := d.downloads[id]; ok {
-				ad.Error = strings.TrimSpace(line)
-			}
-			d.mu.Unlock()
 		}
 	}
 

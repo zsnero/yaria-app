@@ -470,6 +470,24 @@ export const events = {
   },
 };
 
+// === Browser extension bridge ===
+export const extension = {
+  getStatus: (): Promise<{
+    enabled: boolean;
+    running: boolean;
+    port: number;
+    token: string;
+    host: string;
+    error?: string;
+  }> => call(() => wails().ExtensionBridge.GetStatus()),
+  setEnabled: (enabled: boolean): Promise<any> =>
+    call(() => wails().ExtensionBridge.SetEnabled(enabled)),
+  setPort: (port: number): Promise<any> =>
+    call(() => wails().ExtensionBridge.SetPort(port)),
+  regenerateToken: (): Promise<any> =>
+    call(() => wails().ExtensionBridge.RegenerateToken()),
+};
+
 // === Media Server ===
 export const mediaServer = {
   start: (): Promise<any> =>
@@ -532,6 +550,7 @@ export const api = {
   player,
   mpv,
   windowState,
+  extension,
 };
 
 export default api;

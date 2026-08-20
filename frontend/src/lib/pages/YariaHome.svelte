@@ -329,7 +329,9 @@
       if (data.speed) bg.speed = data.speed;
       if (data.eta) bg.eta = data.eta;
       if (data.status) bg.status = data.status;
-      if (data.error) bg.error = data.error;
+      if (data.status === 'error') bg.error = data.error || bg.error || 'Download failed';
+      else if (['downloading', 'processing', 'metadata', 'queued', 'complete', 'cancelled'].includes(data.status)) bg.error = '';
+      else if (typeof data.error === 'string') bg.error = data.error;
       if (data.title && data.title !== data.url) bg.title = data.title;
       bgDownloads = [...bgDownloads]; // trigger reactivity
       return;

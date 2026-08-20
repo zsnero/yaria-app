@@ -87,10 +87,38 @@
     };
   });
 
+  function stableMergeList(incoming: DownloadItem[]): DownloadItem[] {
+    const byId = new Map(incoming.map((d) => [d.id, d]));
+    const ordered: DownloadItem[] = [];
+    const seen = new Set<string>();
+
+    // Keep existing on-screen order for items still present (stops jumpiness)
+    for (const d of downloads) {
+      const next = byId.get(d.id);
+      if (!next) continue;
+      ordered.push({ ...d, ...next });
+      seen.add(d.id);
+    }
+
+    // New items (not yet on screen) — newest first by started_unix / started_at / id
+    const newcomers = incoming.filter((d) => !seen.has(d.id));
+    newcomers.sort((a, b) => {
+      const au = Number((a as any).started_unix || 0);
+      const bu = Number((b as any).started_unix || 0);
+      if (au !== bu) return bu - au;
+      const at = a.started_at || '';
+      const bt = b.started_at || '';
+      if (at !== bt) return bt.localeCompare(at);
+      return (b.id || '').localeCompare(a.id || '');
+    });
+    return [...newcomers, ...ordered];
+  }
+
   async function refreshList() {
     try {
       const result = await api.downloads.list();
-      downloads = Array.isArray(result) ? result : [];
+      const incoming = Array.isArray(result) ? result : [];
+      downloads = downloads.length === 0 ? incoming : stableMergeList(incoming);
       // Sync tweened progress stores
       for (const dl of downloads) {
         if (dl.percent != null) {
@@ -122,13 +150,23 @@
     // Update in place
     downloads = downloads.map(d => {
       if (d.id !== data.id) return d;
+      const nextStatus = data.status || d.status;
+      // Only keep error text on real failures; clear during active download
+      let nextError = d.error;
+      if (nextStatus === 'error') {
+        nextError = data.error || d.error || 'Download failed';
+      } else if (['downloading', 'processing', 'metadata', 'queued', 'complete', 'cancelled'].includes(nextStatus)) {
+        nextError = '';
+      } else if (typeof data.error === 'string') {
+        nextError = data.error;
+      }
       return {
         ...d,
         ...(data.percent != null ? { percent: Math.min(data.percent, 100) } : {}),
         ...(data.speed ? { speed: data.speed } : {}),
         ...(data.eta ? { eta: data.eta } : {}),
         ...(data.status ? { status: data.status } : {}),
-        ...(data.error ? { error: data.error } : {}),
+        error: nextError,
       };
     });
 
@@ -245,7 +283,7 @@
       <h3 class="yd-section-title">Active</h3>
       {#each active as dl (dl.id)}
         {@const progressVal = getProgressValue(dl.id, dl.percent ?? 0)}
-        <div class="download-item" transition:slide={{ duration: 250 }}>
+        <div class="download-item">
           {#if dl.thumbnail}
             <img
               class="dl-item-thumb"
@@ -280,7 +318,7 @@
                 style="width: {Math.min(progressVal, 100)}%"
               ></div>
             </div>
-            {#if dl.error}
+            {#if dl.error && dl.status === 'error'}
               <div class="dl-item-error">{dl.error}</div>
             {/if}
           </div>
