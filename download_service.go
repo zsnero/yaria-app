@@ -19,6 +19,7 @@ import (
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"yaria/pkg/appconfig"
 	"yaria/pkg/yaria/config"
 	"yaria/pkg/yaria/deps"
 	"yaria/pkg/yaria/downloader"
@@ -30,7 +31,7 @@ type activeDownload struct {
 	URL             string
 	Title           string
 	Thumbnail       string
-	Status          string // "queued", "metadata", "downloading", "complete", "error", "cancelled"
+	Status          string // "queued", "metadata", "downloading", "paused", "complete", "error", "cancelled"
 	Percent         float64
 	Speed           string
 	ETA             string
@@ -95,6 +96,12 @@ func NewDownloadService() *DownloadService {
 // startup is called by Wails OnStartup.
 func (d *DownloadService) startup(ctx context.Context) {
 	d.ctx = ctx
+	// Restore preferred download folder (Bridge + Yaria downloader)
+	if dir := strings.TrimSpace(appconfig.BrowserExtensionDownloadDir()); dir != "" {
+		d.mu.Lock()
+		d.cfg.DownloadLocation = dir
+		d.mu.Unlock()
+	}
 }
 
 // shutdown is called by Wails OnShutdown to close the download store.
@@ -588,20 +595,37 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	} else {
 		_, title, err := d.dl.GetMetadata([]string{url})
 		if err != nil {
-			_, userMsg := classifyError(err.Error())
-			// Friendlier hint when site extractor is broken but extension may have directs
-			if strings.Contains(strings.ToLower(err.Error()), "json") ||
-				strings.Contains(strings.ToLower(userMsg), "json") {
-				userMsg = "Site extractor failed. In the extension, pick a quality (not only Best/yt-dlp), or update yt-dlp."
+			errLow := strings.ToLower(err.Error())
+			// Soft-fail: missing title alone must not kill the download
+			soft := strings.Contains(errLow, "no title found") ||
+				strings.Contains(errLow, "unable to extract title")
+			if soft {
+				d.mu.Lock()
+				if ad.Title == "" || ad.Title == ad.URL {
+					if t := titleFromMediaURL(url); t != "" {
+						ad.Title = t
+					} else {
+						ad.Title = "Download"
+					}
+				}
+				d.mu.Unlock()
+			} else {
+				_, userMsg := classifyError(err.Error())
+				if strings.Contains(errLow, "json") || strings.Contains(strings.ToLower(userMsg), "json") {
+					userMsg = "Site extractor failed. In the extension, pick a quality (not only Best/yt-dlp), or update yt-dlp."
+				}
+				d.updateDownload(id, "error", 0, "", "", userMsg)
+				return
 			}
-			d.updateDownload(id, "error", 0, "", "", userMsg)
-			return
+		} else {
+			d.mu.Lock()
+			if title != "" {
+				ad.Title = title
+			} else if ad.Title == "" || ad.Title == ad.URL {
+				ad.Title = titleFromMediaURL(url)
+			}
+			d.mu.Unlock()
 		}
-		d.mu.Lock()
-		if title != "" {
-			ad.Title = title
-		}
-		d.mu.Unlock()
 	}
 
 	// Resolve destination directory (expand ~ since Go doesn't do shell expansion)
@@ -667,20 +691,37 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 	d.cfg.Stderr = io.Discard
 	d.mu.Unlock()
 
-	// Check for cancellation
+	// Check for cancellation / pause — don't overwrite those statuses
 	select {
 	case <-dlCtx.Done():
+		d.mu.Lock()
+		st := ""
+		if a, ok := d.downloads[id]; ok {
+			st = a.Status
+		}
+		d.mu.Unlock()
+		if st != "paused" && st != "cancelled" {
+			d.updateDownload(id, "cancelled", 0, "", "", "")
+		}
 		return
 	default:
 	}
 
 	if dlErr != nil || !success {
+		d.mu.Lock()
+		st := ""
+		if a, ok := d.downloads[id]; ok {
+			st = a.Status
+			if st == "paused" || st == "cancelled" {
+				d.mu.Unlock()
+				return
+			}
+		}
 		errMsg := "download failed"
 		if dlErr != nil {
 			errMsg = dlErr.Error()
 		}
 		// Prefer a more specific ERROR line captured from yt-dlp stderr (retries etc.)
-		d.mu.Lock()
 		if ad != nil {
 			captured := ad.lastYtdlpErr
 			if captured == "" {
@@ -789,6 +830,166 @@ func (d *DownloadService) CancelDownload(id string) map[string]interface{} {
 	return map[string]interface{}{"status": "cancelled"}
 }
 
+// PauseDownload stops an in-progress download but keeps the entry for resume.
+// Partial files on disk are left in place (yt-dlp can continue later).
+func (d *DownloadService) PauseDownload(id string) map[string]interface{} {
+	d.mu.Lock()
+	ad, ok := d.downloads[id]
+	if !ok {
+		d.mu.Unlock()
+		return map[string]interface{}{"error": "download not found"}
+	}
+	st := ad.Status
+	if st != "downloading" && st != "metadata" && st != "queued" && st != "processing" {
+		d.mu.Unlock()
+		return map[string]interface{}{"error": "download is not active"}
+	}
+	// Remove from wait queue if queued
+	if st == "queued" {
+		nq := d.waitQueue[:0]
+		for _, qid := range d.waitQueue {
+			if qid != id {
+				nq = append(nq, qid)
+			}
+		}
+		d.waitQueue = nq
+	}
+	cancel := ad.cancel
+	pw := ad.pipeWriter
+	pct := ad.Percent
+	d.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if pw != nil {
+		pw.Close()
+	}
+	d.updateDownload(id, "paused", pct, "", "", "")
+	return map[string]interface{}{"status": "paused"}
+}
+
+// ResumeDownload continues a paused (or failed) download with the same settings.
+func (d *DownloadService) ResumeDownload(id string) map[string]interface{} {
+	return d.restartDownload(id, false)
+}
+
+// RetryDownload restarts an errored or cancelled download.
+func (d *DownloadService) RetryDownload(id string) map[string]interface{} {
+	return d.restartDownload(id, true)
+}
+
+func (d *DownloadService) restartDownload(id string, fromError bool) map[string]interface{} {
+	if d.dl == nil {
+		return map[string]interface{}{"error": "downloader not initialized"}
+	}
+
+	d.mu.Lock()
+	ad, ok := d.downloads[id]
+	var url, title, referer, resolution, downloadDir, audioFormat, containerFormat string
+	var audioOnly bool
+	var thumb string
+	if ok {
+		st := ad.Status
+		if fromError {
+			if st != "error" && st != "cancelled" && st != "paused" {
+				d.mu.Unlock()
+				return map[string]interface{}{"error": "only failed, cancelled, or paused downloads can be retried"}
+			}
+		} else if st != "paused" && st != "error" && st != "cancelled" {
+			d.mu.Unlock()
+			return map[string]interface{}{"error": "download is not paused"}
+		}
+		url = ad.URL
+		title = ad.Title
+		referer = ad.Referer
+		resolution = ad.Resolution
+		downloadDir = ad.DownloadDir
+		audioOnly = ad.AudioOnly
+		audioFormat = ad.AudioFormat
+		containerFormat = ad.ContainerFormat
+		thumb = ad.Thumbnail
+		// Reset runtime fields
+		ad.Status = "queued"
+		ad.Error = ""
+		ad.lastYtdlpErr = ""
+		ad.Percent = 0
+		ad.Speed = ""
+		ad.ETA = ""
+		ad.cancel = nil
+		ad.pipeWriter = nil
+	}
+	d.mu.Unlock()
+
+	if !ok {
+		// History-only record from previous session
+		if d.store == nil {
+			return map[string]interface{}{"error": "download not found"}
+		}
+		r, err := d.store.Get(id)
+		if err != nil || r == nil {
+			return map[string]interface{}{"error": "download not found"}
+		}
+		if r.Status != "error" && r.Status != "cancelled" && r.Status != "paused" {
+			return map[string]interface{}{"error": "only failed or cancelled downloads can be retried"}
+		}
+		url = r.URL
+		title = r.Title
+		thumb = r.Thumbnail
+		downloadDir = ""
+		if r.FilePath != "" {
+			// parent of title folder
+			downloadDir = filepath.Dir(filepath.Dir(r.FilePath))
+		}
+		if downloadDir == "" {
+			home, _ := os.UserHomeDir()
+			downloadDir = filepath.Join(home, "Downloads")
+		}
+		containerFormat = "mp4"
+		// Re-create active entry with same id
+		d.mu.Lock()
+		now := time.Now()
+		ad = &activeDownload{
+			ID:              id,
+			URL:             url,
+			Title:           title,
+			Thumbnail:       thumb,
+			Status:          "queued",
+			StartedAt:       now.Format("2006-01-02 15:04:05"),
+			startedUnix:     now.UnixMilli(),
+			DownloadDir:     downloadDir,
+			ContainerFormat: containerFormat,
+		}
+		d.downloads[id] = ad
+		d.mu.Unlock()
+	}
+
+	d.mu.Lock()
+	if d.running >= d.maxRunning {
+		// avoid duplicate queue entries
+		found := false
+		for _, qid := range d.waitQueue {
+			if qid == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			d.waitQueue = append(d.waitQueue, id)
+		}
+		d.mu.Unlock()
+		d.updateDownload(id, "queued", 0, "", "", "")
+		return map[string]interface{}{"id": id, "status": "queued"}
+	}
+	d.running++
+	d.mu.Unlock()
+
+	_ = title
+	_ = referer
+	go d.runDownload(id, url, resolution, downloadDir, audioOnly, audioFormat, containerFormat)
+	return map[string]interface{}{"id": id, "status": "queued"}
+}
+
 // GetDownloads lists all downloads (active in-memory + persisted history).
 // Results are sorted by started_at descending (newest first) for stable UI ordering.
 func (d *DownloadService) GetDownloads() []map[string]interface{} {
@@ -880,11 +1081,11 @@ func (d *DownloadService) GetDownloads() []map[string]interface{} {
 	return result
 }
 
-// RemoveDownload removes a download from the list (only if complete/error/cancelled).
+// RemoveDownload removes a download from the list (only if complete/error/cancelled/paused).
 func (d *DownloadService) RemoveDownload(id string) map[string]interface{} {
 	d.mu.Lock()
 	ad, ok := d.downloads[id]
-	if ok && (ad.Status == "complete" || ad.Status == "error" || ad.Status == "cancelled") {
+	if ok && (ad.Status == "complete" || ad.Status == "error" || ad.Status == "cancelled" || ad.Status == "paused") {
 		delete(d.downloads, id)
 	}
 	d.mu.Unlock()
@@ -1179,19 +1380,29 @@ func titleKeysMatch(a, b string) bool {
 	return false
 }
 
-// SetDownloadDir sets the default download directory.
+// SetDownloadDir sets the default download directory (persisted for Bridge + app).
 func (d *DownloadService) SetDownloadDir(dir string) map[string]interface{} {
+	dir = strings.TrimSpace(dir)
 	d.mu.Lock()
 	d.cfg.DownloadLocation = dir
 	d.mu.Unlock()
-	return map[string]interface{}{"status": "ok", "dir": dir}
+	_ = appconfig.SetBrowserExtensionDownloadDir(dir)
+	out := dir
+	if out != "" {
+		out = expandTilde(out)
+	}
+	return map[string]interface{}{"status": "ok", "dir": out}
 }
 
 // GetDownloadDir returns the current download directory (with ~ expanded).
+// Used by Yaria Bridge extension downloads and the main downloader UI.
 func (d *DownloadService) GetDownloadDir() string {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	loc := d.cfg.DownloadLocation
+	d.mu.Unlock()
+	if loc == "" {
+		loc = appconfig.BrowserExtensionDownloadDir()
+	}
 	if loc == "" {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, "Downloads")
@@ -1200,6 +1411,7 @@ func (d *DownloadService) GetDownloadDir() string {
 }
 
 // SelectDownloadDir opens a native directory picker and returns the chosen path.
+// Works on Linux and Windows (Wails OpenDirectoryDialog).
 func (d *DownloadService) SelectDownloadDir() string {
 	dir, err := wailsRuntime.OpenDirectoryDialog(d.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "Select Download Directory",
@@ -1210,6 +1422,7 @@ func (d *DownloadService) SelectDownloadDir() string {
 	d.mu.Lock()
 	d.cfg.DownloadLocation = dir
 	d.mu.Unlock()
+	_ = appconfig.SetBrowserExtensionDownloadDir(dir)
 	return dir
 }
 
@@ -1401,7 +1614,7 @@ func (d *DownloadService) updateDownload(id, status string, percent float64, spe
 	// Rate limit: emit at most once per second, unless status is important
 	shouldEmit := false
 	if ok {
-		isImportant := status == "complete" || status == "error" || status == "cancelled" || status == "metadata" || status == "queued" || status == "processing"
+		isImportant := status == "complete" || status == "error" || status == "cancelled" || status == "paused" || status == "metadata" || status == "queued" || status == "processing"
 		if isImportant || time.Since(ad.lastEmit) >= time.Second {
 			shouldEmit = true
 			ad.lastEmit = time.Now()
@@ -1409,8 +1622,8 @@ func (d *DownloadService) updateDownload(id, status string, percent float64, spe
 	}
 	d.mu.Unlock()
 
-	// Persist terminal states to disk
-	if status == "complete" || status == "error" || status == "cancelled" {
+	// Persist terminal / paused states to disk
+	if status == "complete" || status == "error" || status == "cancelled" || status == "paused" {
 		if d.store != nil {
 			filePath := ""
 			d.mu.Lock()

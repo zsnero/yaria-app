@@ -221,6 +221,7 @@
     if (dir) {
       downloadDir = dir;
       try { localStorage.setItem('yaria_download_dir', dir); } catch { /* ignore */ }
+      api.downloads.setDownloadDir(dir).catch(() => {});
     }
   }
 

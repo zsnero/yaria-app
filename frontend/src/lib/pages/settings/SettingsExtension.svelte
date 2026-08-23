@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../../api/wails';
   import { toastSuccess, toastError } from '../../stores/toast';
+  import FilePicker from '../../components/FilePicker.svelte';
 
   let extEnabled = $state(true);
   let extRunning = $state(false);
@@ -11,6 +12,9 @@
   let extBusy = $state(false);
   let tokenVisible = $state(false);
   let loadError = $state('');
+  let downloadDir = $state('');
+  let dirBusy = $state(false);
+  let showFilePicker = $state(false);
 
   function applyExtStatus(s: any) {
     if (!s || s.error) {
@@ -35,6 +39,74 @@
       applyExtStatus(s);
     } catch (e: any) {
       loadError = e?.message || 'Could not load extension status';
+    }
+    try {
+      downloadDir = (await api.downloads.getDownloadDir()) || '';
+    } catch {
+      downloadDir = '';
+    }
+  }
+
+  function browseDownloadDir() {
+    showFilePicker = true;
+  }
+
+  async function handleDirSelected(dir: string) {
+    showFilePicker = false;
+    if (!dir) return;
+    dirBusy = true;
+    try {
+      downloadDir = dir;
+      const res = await api.downloads.setDownloadDir(dir);
+      if (res?.error) throw new Error(res.error);
+      if (res?.dir) downloadDir = res.dir;
+      try {
+        localStorage.setItem('yaria_download_dir', downloadDir);
+      } catch {
+        /* ignore */
+      }
+      toastSuccess('Download folder saved');
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to save folder');
+    } finally {
+      dirBusy = false;
+    }
+  }
+
+  async function saveDownloadDir() {
+    dirBusy = true;
+    try {
+      const res = await api.downloads.setDownloadDir(downloadDir.trim());
+      if (res?.error) throw new Error(res.error);
+      if (res?.dir) downloadDir = res.dir;
+      try {
+        localStorage.setItem('yaria_download_dir', downloadDir);
+      } catch {
+        /* ignore */
+      }
+      toastSuccess('Download folder saved');
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to save folder');
+    } finally {
+      dirBusy = false;
+    }
+  }
+
+  async function resetDownloadDir() {
+    dirBusy = true;
+    try {
+      await api.downloads.setDownloadDir('');
+      downloadDir = (await api.downloads.getDownloadDir()) || '';
+      try {
+        localStorage.removeItem('yaria_download_dir');
+      } catch {
+        /* ignore */
+      }
+      toastSuccess('Reset to default Downloads folder');
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to reset');
+    } finally {
+      dirBusy = false;
     }
   }
 
@@ -153,7 +225,37 @@
       <button class="btn btn-ghost btn-sm" disabled={extBusy} onclick={regenToken}>Regenerate</button>
     </div>
   </div>
+
+  <div class="setting-group">
+    <div class="setting-label">Default download folder</div>
+    <div class="setting-desc">
+      Where Yaria Bridge extension downloads are saved (Linux and Windows). Defaults to your user Downloads folder.
+    </div>
+    <div class="ext-row dir-row">
+      <input
+        class="ext-input dir-input"
+        type="text"
+        bind:value={downloadDir}
+        placeholder="~/Downloads"
+        disabled={dirBusy}
+      />
+      <button class="btn btn-ghost btn-sm" disabled={dirBusy} onclick={browseDownloadDir}>Browse…</button>
+      <button class="btn btn-ghost btn-sm" disabled={dirBusy || !downloadDir.trim()} onclick={saveDownloadDir}>
+        Save
+      </button>
+      <button class="btn btn-ghost btn-sm" disabled={dirBusy} onclick={resetDownloadDir}>Reset</button>
+    </div>
+  </div>
 </div>
+
+{#if showFilePicker}
+  <FilePicker
+    onSelect={handleDirSelected}
+    onClose={() => {
+      showFilePicker = false;
+    }}
+  />
+{/if}
 
 <style lang="scss">
   @use '../../styles/variables' as *;
@@ -259,6 +361,16 @@
     color: $text;
     padding: 8px 10px;
     font: inherit;
+  }
+
+  .dir-row {
+    align-items: stretch;
+  }
+
+  .dir-input {
+    flex: 1;
+    min-width: 180px;
+    width: auto;
   }
 
   .btn {

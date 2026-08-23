@@ -54,7 +54,7 @@
   }
 
   let active = $derived(
-    downloads.filter(d => ['downloading', 'queued', 'metadata', 'processing'].includes(d.status))
+    downloads.filter(d => ['downloading', 'queued', 'metadata', 'processing', 'paused'].includes(d.status))
   );
   let history = $derived(
     downloads.filter(d => ['complete', 'error', 'cancelled'].includes(d.status))
@@ -155,7 +155,7 @@
       let nextError = d.error;
       if (nextStatus === 'error') {
         nextError = data.error || d.error || 'Download failed';
-      } else if (['downloading', 'processing', 'metadata', 'queued', 'complete', 'cancelled'].includes(nextStatus)) {
+      } else if (['downloading', 'processing', 'metadata', 'queued', 'paused', 'complete', 'cancelled'].includes(nextStatus)) {
         nextError = '';
       } else if (typeof data.error === 'string') {
         nextError = data.error;
@@ -171,7 +171,7 @@
     });
 
     // Refresh on terminal states
-    if (['complete', 'error', 'cancelled'].includes(data.status)) {
+    if (['complete', 'error', 'cancelled', 'paused'].includes(data.status)) {
       setTimeout(refreshList, 500);
     }
   }
@@ -190,6 +190,47 @@
       await api.downloads.cancel(id);
       refreshList();
     } catch { /* ignore */ }
+  }
+
+  async function pauseDownload(id: string) {
+    try {
+      await api.downloads.pause(id);
+      refreshList();
+    } catch { /* ignore */ }
+  }
+
+  async function resumeDownload(id: string) {
+    try {
+      await api.downloads.resume(id);
+      refreshList();
+    } catch { /* ignore */ }
+  }
+
+  async function retryDownload(id: string) {
+    try {
+      await api.downloads.retry(id);
+      refreshList();
+    } catch { /* ignore */ }
+  }
+
+  async function copyDownloadLink(dl: DownloadItem) {
+    const link = dl.url || '';
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      // Fallback for environments without clipboard API
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } catch { /* ignore */ }
+      document.body.removeChild(ta);
+    }
   }
 
   async function removeDownload(id: string) {
@@ -248,6 +289,7 @@
       case 'complete': return 'status-complete';
       case 'error': return 'status-error';
       case 'cancelled': return 'status-cancelled';
+      case 'paused': return 'status-paused';
       case 'processing': return 'status-processing';
       case 'queued': case 'metadata': return 'status-queued';
       default: return '';
@@ -323,12 +365,25 @@
             {/if}
           </div>
           <div class="download-item-actions">
-            <button
-              class="btn btn-ghost btn-sm"
-              onclick={() => cancelDownload(dl.id)}
-            >
-              Cancel
+            <button class="btn btn-ghost btn-sm" title="Copy link" onclick={() => copyDownloadLink(dl)}>
+              Copy
             </button>
+            {#if dl.status === 'paused'}
+              <button class="btn btn-primary btn-sm" title="Resume" onclick={() => resumeDownload(dl.id)}>
+                Resume
+              </button>
+            {:else if ['downloading', 'metadata', 'processing'].includes(dl.status)}
+              <button class="btn btn-ghost btn-sm" title="Pause" onclick={() => pauseDownload(dl.id)}>
+                Pause
+              </button>
+              <button class="btn btn-ghost btn-sm" title="Cancel" onclick={() => cancelDownload(dl.id)}>
+                Cancel
+              </button>
+            {:else if dl.status === 'queued'}
+              <button class="btn btn-ghost btn-sm" title="Cancel" onclick={() => cancelDownload(dl.id)}>
+                Cancel
+              </button>
+            {/if}
           </div>
         </div>
       {/each}
@@ -373,6 +428,14 @@
                 </svg>
               </button>
             {/if}
+            {#if dl.status === 'error' || dl.status === 'cancelled'}
+              <button class="btn btn-primary btn-sm" title="Retry" onclick={() => retryDownload(dl.id)}>
+                Retry
+              </button>
+            {/if}
+            <button class="btn btn-ghost btn-sm" title="Copy link" onclick={() => copyDownloadLink(dl)}>
+              Copy
+            </button>
             <button
               class="btn btn-ghost btn-sm"
               onclick={() => removeDownload(dl.id)}
@@ -517,6 +580,11 @@
   .status-cancelled {
     background: rgba(255, 255, 255, 0.05);
     color: $text-muted;
+  }
+
+  .status-paused {
+    background: rgba($yellow, 0.15);
+    color: $yellow;
   }
 
   .status-processing {
