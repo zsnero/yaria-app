@@ -738,30 +738,42 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		return
 	}
 
-	// Rename hidden folder to visible: .Title/ -> Title/
-	// yt-dlp sanitizes filenames differently from the metadata title,
-	// so scan for any dot-prefixed directory in dest instead of matching by title
-	entries, _ := os.ReadDir(dest)
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() && strings.HasPrefix(name, ".") && name != "." && name != ".." {
-			hiddenDir := filepath.Join(dest, name)
-			visibleDir := filepath.Join(dest, name[1:]) // remove leading dot
-			os.Rename(hiddenDir, visibleDir)
-		}
+	// Finalize: unveil hidden .Title/ folders, reject leftover .part fragments
+	d.mu.Lock()
+	title := ""
+	if ad != nil {
+		title = ad.Title
 	}
+	d.mu.Unlock()
 
-	// Find THIS download's file (newest matching title folder / mtime — never first walk hit)
+	started := time.Time{}
 	d.mu.Lock()
 	if ad != nil {
-		title := ad.Title
-		started := time.Time{}
 		if t, err := time.ParseInLocation("2006-01-02 15:04:05", ad.StartedAt, time.Local); err == nil {
 			started = t.Add(-2 * time.Minute)
 		} else if t, err := time.ParseInLocation("2006-01-02 15:04", ad.StartedAt, time.Local); err == nil {
-			started = t.Add(-2 * time.Minute) // legacy minute-only timestamps
+			started = t.Add(-2 * time.Minute)
 		}
-		ad.FilePath = findDownloadVideo(dest, title, started)
+	}
+	d.mu.Unlock()
+
+	videoPath, finErr := finalizeDownloadOutput(dest, title, started)
+	if finErr != nil {
+		d.mu.Lock()
+		st := ""
+		if a, ok := d.downloads[id]; ok {
+			st = a.Status
+		}
+		d.mu.Unlock()
+		if st != "paused" && st != "cancelled" {
+			d.updateDownload(id, "error", 0, "", "", finErr.Error())
+		}
+		return
+	}
+
+	d.mu.Lock()
+	if ad != nil {
+		ad.FilePath = videoPath
 	}
 	d.mu.Unlock()
 
@@ -1155,19 +1167,30 @@ func (d *DownloadService) PlayDownloadedFile(id string) map[string]interface{} {
 		}
 	}
 
-	// Stored path valid?
+	// Stored path valid? (never play .part / aria2 fragments or hidden leftovers)
 	if filePath != "" {
-		if st, err := os.Stat(filePath); err == nil && !st.IsDir() {
-			return map[string]interface{}{
-				"status": "ok",
-				"file":   filePath,
-				"path":   filePath,
-				"title":  filepath.Base(filePath),
+		_ = unveilPathParents(filePath)
+		// Re-resolve after unveil
+		if strings.Contains(filepath.Base(filepath.Dir(filePath)), ".") {
+			if f := findDownloadVideo(filepath.Dir(filepath.Dir(filePath)), title, time.Time{}); f != "" {
+				filePath = f
 			}
 		}
-		// Stale file path — search only its parent title folder, not the shared root
+		if st, err := os.Stat(filePath); err == nil && !st.IsDir() && !isIncompleteMediaPath(filePath) {
+			// Prefer path not under a still-hidden directory
+			if !pathHasHiddenComponent(filePath) {
+				return map[string]interface{}{
+					"status": "ok",
+					"file":   filePath,
+					"path":   filePath,
+					"title":  filepath.Base(filePath),
+				}
+			}
+		}
+		// Stale / incomplete / hidden — search only its parent title folder
 		parent := filepath.Dir(filePath)
-		if found := findDownloadVideo(parent, title, time.Time{}); found != "" {
+		_ = unveilPathParents(filePath)
+		if found := findDownloadVideo(parent, title, time.Time{}); found != "" && !isIncompleteMediaPath(found) {
 			return map[string]interface{}{
 				"status": "ok",
 				"file":   found,
@@ -1195,7 +1218,8 @@ func (d *DownloadService) PlayDownloadedFile(id string) map[string]interface{} {
 		if dir == "" {
 			continue
 		}
-		if found := findDownloadVideo(dir, title, time.Time{}); found != "" {
+		unveilHiddenDownloadDirs(dir)
+		if found := findDownloadVideo(dir, title, time.Time{}); found != "" && !isIncompleteMediaPath(found) && !pathHasHiddenComponent(found) {
 			// Persist corrected path
 			if d.store != nil {
 				if r, err := d.store.Get(id); err == nil {
@@ -1306,15 +1330,234 @@ func findDownloadVideo(dest, title string, notBefore time.Time) string {
 	return ""
 }
 
+// finalizeDownloadOutput unveils hidden download folders, ensures no .part
+// fragments remain, and returns the playable media path.
+func finalizeDownloadOutput(dest, title string, notBefore time.Time) (string, error) {
+	dest = expandTilde(dest)
+	if dest == "" {
+		return "", fmt.Errorf("download folder missing")
+	}
+
+	// Unveil any .Title → Title directories (ignore rename errors; try merge next)
+	unveilHiddenDownloadDirs(dest)
+
+	// Prefer folders matching this title (visible first, then still-hidden)
+	candidates := downloadDirsForTitle(dest, title, notBefore)
+	if len(candidates) == 0 {
+		// Fall back: any recent video under dest
+		if f := findDownloadVideo(dest, title, notBefore); f != "" {
+			if isIncompleteMediaPath(f) {
+				return "", fmt.Errorf("download incomplete — fragment files remain (.part). Use Retry")
+			}
+			// Ensure parent is not a leftover hidden folder
+			_ = unveilPathParents(f)
+			if f2 := findDownloadVideo(dest, title, notBefore); f2 != "" {
+				f = f2
+			}
+			return f, nil
+		}
+		return "", fmt.Errorf("download finished but no video file was found. Use Retry")
+	}
+
+	// Check each candidate folder for incomplete aria2/yt-dlp parts
+	var bestVideo string
+	var bestTime time.Time
+	for _, dir := range candidates {
+		if hasIncompleteFragments(dir) {
+			// One more moment — ffmpeg merge sometimes lags process exit
+			time.Sleep(1500 * time.Millisecond)
+			unveilHiddenDownloadDirs(dest)
+			if hasIncompleteFragments(dir) {
+				// Still fragmented → not actually complete
+				return "", fmt.Errorf("download incomplete — still fragmented (.part). Use Retry")
+			}
+		}
+		if f, t := newestVideoIn(dir, notBefore); f != "" && (bestVideo == "" || t.After(bestTime)) {
+			bestVideo, bestTime = f, t
+		}
+	}
+	if bestVideo == "" {
+		// Try whole dest once more after unveil
+		if f := findDownloadVideo(dest, title, notBefore); f != "" && !isIncompleteMediaPath(f) {
+			return f, nil
+		}
+		return "", fmt.Errorf("download incomplete — no finished video file. Use Retry")
+	}
+	if isIncompleteMediaPath(bestVideo) {
+		return "", fmt.Errorf("download incomplete — fragment files remain (.part). Use Retry")
+	}
+	return bestVideo, nil
+}
+
+func unveilHiddenDownloadDirs(dest string) {
+	entries, err := os.ReadDir(dest)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == "." || name == ".." || !strings.HasPrefix(name, ".") {
+			continue
+		}
+		// Skip dotdirs that aren't download folders (.cache, .yaria, etc.)
+		if name == ".cache" || name == ".config" || name == ".local" {
+			continue
+		}
+		hidden := filepath.Join(dest, name)
+		visible := filepath.Join(dest, name[1:])
+		if err := unveilDir(hidden, visible); err != nil {
+			// keep trying others
+			continue
+		}
+	}
+}
+
+func unveilDir(hidden, visible string) error {
+	if _, err := os.Stat(hidden); err != nil {
+		return err
+	}
+	if _, err := os.Stat(visible); os.IsNotExist(err) {
+		return os.Rename(hidden, visible)
+	}
+	// Visible already exists — move contents then remove hidden
+	entries, err := os.ReadDir(hidden)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		src := filepath.Join(hidden, e.Name())
+		dst := filepath.Join(visible, e.Name())
+		if _, err := os.Stat(dst); err == nil {
+			// prefer larger / newer file
+			si, _ := os.Stat(src)
+			di, _ := os.Stat(dst)
+			if si != nil && di != nil && si.Size() > di.Size() {
+				_ = os.Remove(dst)
+				_ = os.Rename(src, dst)
+			} else {
+				_ = os.RemoveAll(src)
+			}
+			continue
+		}
+		_ = os.Rename(src, dst)
+	}
+	// Remove leftover empty hidden dir (ignore if not empty)
+	_ = os.Remove(hidden)
+	return nil
+}
+
+func unveilPathParents(filePath string) error {
+	dir := filepath.Dir(filePath)
+	base := filepath.Base(dir)
+	if strings.HasPrefix(base, ".") && base != "." && base != ".." {
+		parent := filepath.Dir(dir)
+		return unveilDir(dir, filepath.Join(parent, base[1:]))
+	}
+	return nil
+}
+
+func downloadDirsForTitle(dest, title string, notBefore time.Time) []string {
+	normTitle := normalizeTitleKey(title)
+	var dirs []string
+	entries, _ := os.ReadDir(dest)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Match both visible and still-hidden names
+		key := name
+		if strings.HasPrefix(key, ".") {
+			key = key[1:]
+		}
+		if normTitle != "" && !titleKeysMatch(normTitle, normalizeTitleKey(key)) {
+			// Also accept any recent dir if title match fails (sanitized names differ)
+			if notBefore.IsZero() {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || info.ModTime().Before(notBefore) {
+				continue
+			}
+		}
+		dirs = append(dirs, filepath.Join(dest, name))
+	}
+	// Unveil matched hidden dirs now
+	var out []string
+	for _, d := range dirs {
+		base := filepath.Base(d)
+		if strings.HasPrefix(base, ".") {
+			vis := filepath.Join(filepath.Dir(d), base[1:])
+			_ = unveilDir(d, vis)
+			if st, err := os.Stat(vis); err == nil && st.IsDir() {
+				out = append(out, vis)
+				continue
+			}
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+func hasIncompleteFragments(dir string) bool {
+	found := false
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if isIncompleteMediaPath(path) {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+func isIncompleteMediaPath(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	if strings.HasSuffix(name, ".part") || strings.HasSuffix(name, ".part.aria2") ||
+		strings.HasSuffix(name, ".aria2") || strings.HasSuffix(name, ".ytdl") ||
+		strings.Contains(name, ".part.") {
+		return true
+	}
+	// temp yt-dlp formats like file.f137.mp4.part already covered by .part
+	return false
+}
+
+func pathHasHiddenComponent(path string) bool {
+	// true if any directory component starts with '.' (except . and ..)
+	for _, p := range strings.Split(filepath.Clean(path), string(filepath.Separator)) {
+		if p == "" || p == "." || p == ".." {
+			continue
+		}
+		if strings.HasPrefix(p, ".") {
+			return true
+		}
+	}
+	return false
+}
+
 func newestVideoIn(dir string, notBefore time.Time) (string, time.Time) {
 	var best string
 	var bestTime time.Time
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return nil
+		}
+		// Never descend into unrelated hidden dirs except our own (already unveiled)
+		if info.IsDir() {
+			base := info.Name()
+			if strings.HasPrefix(base, ".") && base != "." && base != ".." {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		name := info.Name()
-		if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".part") {
+		if strings.HasPrefix(name, ".") || isIncompleteMediaPath(path) {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(name))
