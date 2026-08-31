@@ -656,7 +656,14 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		d.cfg.AudioFormat = audioFormat
 	}
 	d.cfg.ContainerFormat = containerFormat
-	d.cfg.OutputTemplate = ".%(title)s/%(title)s.%(ext)s"
+	// Leading dot hides incomplete output; finalize unveils after success.
+	// Folder mode: .Title/Title.ext → Title/Title.ext
+	// Flat mode:    .Title.ext → Title.ext
+	if appconfig.YariaDownloadInFolder() {
+		d.cfg.OutputTemplate = ".%(title)s/%(title)s.%(ext)s"
+	} else {
+		d.cfg.OutputTemplate = ".%(title)s.%(ext)s"
+	}
 	d.cfg.Referer = ref
 	// aria2 stays enabled when configured; downloader tries aria2 first on
 	// direct files and retries without it if the CDN resets the connection.
@@ -1271,20 +1278,42 @@ func findDownloadVideo(dest, title string, notBefore time.Time) string {
 
 	normTitle := normalizeTitleKey(title)
 
-	// 1) Exact / fuzzy match title subfolder
+	// 1) Exact / fuzzy match title subfolder OR flat file Title.ext in dest
 	if normTitle != "" {
 		entries, _ := os.ReadDir(dest)
 		var matchedDirs []string
+		var bestFlat string
+		var bestFlatTime time.Time
 		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
 			name := e.Name()
 			if strings.HasPrefix(name, ".") {
 				continue
 			}
-			if titleKeysMatch(normTitle, normalizeTitleKey(name)) {
-				matchedDirs = append(matchedDirs, filepath.Join(dest, name))
+			if e.IsDir() {
+				if titleKeysMatch(normTitle, normalizeTitleKey(name)) {
+					matchedDirs = append(matchedDirs, filepath.Join(dest, name))
+				}
+				continue
+			}
+			// Flat layout: Title.ext
+			ext := strings.ToLower(filepath.Ext(name))
+			if !downloadVideoExts[ext] || isIncompleteMediaPath(name) {
+				continue
+			}
+			base := strings.TrimSuffix(name, filepath.Ext(name))
+			if !titleKeysMatch(normTitle, normalizeTitleKey(base)) {
+				continue
+			}
+			p := filepath.Join(dest, name)
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			if !notBefore.IsZero() && info.ModTime().Before(notBefore.Add(-2*time.Second)) {
+				continue
+			}
+			if bestFlat == "" || info.ModTime().After(bestFlatTime) {
+				bestFlat, bestFlatTime = p, info.ModTime()
 			}
 		}
 		// Newest video among matched title folders
@@ -1294,6 +1323,12 @@ func findDownloadVideo(dest, title string, notBefore time.Time) string {
 			if f, t := newestVideoIn(dir, notBefore); f != "" && (best == "" || t.After(bestTime)) {
 				best, bestTime = f, t
 			}
+		}
+		if best != "" && (bestFlat == "" || bestTime.After(bestFlatTime) || bestTime.Equal(bestFlatTime)) {
+			return best
+		}
+		if bestFlat != "" {
+			return bestFlat
 		}
 		if best != "" {
 			return best
@@ -1338,20 +1373,28 @@ func finalizeDownloadOutput(dest, title string, notBefore time.Time) (string, er
 		return "", fmt.Errorf("download folder missing")
 	}
 
-	// Unveil any .Title → Title directories (ignore rename errors; try merge next)
+	// Unveil .Title → Title dirs and .Title.ext → Title.ext flat files
 	unveilHiddenDownloadDirs(dest)
+
+	// Flat incomplete fragments for this title in download root (e.g. .Title.mp4.part)
+	if titleHasIncompleteInRoot(dest, title, notBefore) {
+		time.Sleep(1500 * time.Millisecond)
+		unveilHiddenDownloadDirs(dest)
+		if titleHasIncompleteInRoot(dest, title, notBefore) {
+			return "", fmt.Errorf("download incomplete — still fragmented (.part). Use Retry")
+		}
+	}
 
 	// Prefer folders matching this title (visible first, then still-hidden)
 	candidates := downloadDirsForTitle(dest, title, notBefore)
 	if len(candidates) == 0 {
-		// Fall back: any recent video under dest
+		// Flat or loose file under dest
 		if f := findDownloadVideo(dest, title, notBefore); f != "" {
-			if isIncompleteMediaPath(f) {
+			if isIncompleteMediaPath(f) || pathHasHiddenComponent(f) {
 				return "", fmt.Errorf("download incomplete — fragment files remain (.part). Use Retry")
 			}
-			// Ensure parent is not a leftover hidden folder
 			_ = unveilPathParents(f)
-			if f2 := findDownloadVideo(dest, title, notBefore); f2 != "" {
+			if f2 := findDownloadVideo(dest, title, notBefore); f2 != "" && !isIncompleteMediaPath(f2) {
 				f = f2
 			}
 			return f, nil
@@ -1395,23 +1438,37 @@ func unveilHiddenDownloadDirs(dest string) {
 		return
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
 		name := e.Name()
 		if name == "." || name == ".." || !strings.HasPrefix(name, ".") {
 			continue
 		}
-		// Skip dotdirs that aren't download folders (.cache, .yaria, etc.)
-		if name == ".cache" || name == ".config" || name == ".local" {
+		// Skip system/dotdirs that aren't download outputs
+		if name == ".cache" || name == ".config" || name == ".local" || name == ".yaria" {
 			continue
 		}
 		hidden := filepath.Join(dest, name)
 		visible := filepath.Join(dest, name[1:])
-		if err := unveilDir(hidden, visible); err != nil {
-			// keep trying others
+		if e.IsDir() {
+			_ = unveilDir(hidden, visible)
 			continue
 		}
+		// Flat mode: .Title.ext → Title.ext (skip incomplete parts)
+		if isIncompleteMediaPath(hidden) {
+			continue
+		}
+		if _, err := os.Stat(visible); err == nil {
+			// Prefer larger file if both exist
+			si, _ := os.Stat(hidden)
+			di, _ := os.Stat(visible)
+			if si != nil && di != nil && si.Size() > di.Size() {
+				_ = os.Remove(visible)
+				_ = os.Rename(hidden, visible)
+			} else {
+				_ = os.Remove(hidden)
+			}
+			continue
+		}
+		_ = os.Rename(hidden, visible)
 	}
 }
 
@@ -1515,6 +1572,50 @@ func hasIncompleteFragments(dir string) bool {
 		return nil
 	})
 	return found
+}
+
+// titleHasIncompleteInRoot detects flat-mode .part files for this title under dest.
+func titleHasIncompleteInRoot(dest, title string, notBefore time.Time) bool {
+	entries, err := os.ReadDir(dest)
+	if err != nil {
+		return false
+	}
+	normTitle := normalizeTitleKey(title)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !isIncompleteMediaPath(name) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if !notBefore.IsZero() && info.ModTime().Before(notBefore.Add(-2*time.Second)) {
+			continue
+		}
+		// Strip leading '.' and incomplete suffixes for title match
+		check := name
+		if strings.HasPrefix(check, ".") {
+			check = check[1:]
+		}
+		lower := strings.ToLower(check)
+		for _, suf := range []string{".part.aria2", ".aria2", ".ytdl", ".part"} {
+			if strings.HasSuffix(lower, suf) {
+				check = check[:len(check)-len(suf)]
+				lower = strings.ToLower(check)
+			}
+		}
+		// also strip media ext: Title.mp4 left after .part removed
+		base := strings.TrimSuffix(check, filepath.Ext(check))
+		if normTitle == "" || titleKeysMatch(normTitle, normalizeTitleKey(base)) ||
+			titleKeysMatch(normTitle, normalizeTitleKey(check)) {
+			return true
+		}
+	}
+	return false
 }
 
 func isIncompleteMediaPath(path string) bool {
@@ -1621,6 +1722,19 @@ func titleKeysMatch(a, b string) bool {
 		return a[:n] == b[:n]
 	}
 	return false
+}
+
+// GetDownloadInFolder returns whether downloads are stored in a title subfolder.
+func (d *DownloadService) GetDownloadInFolder() bool {
+	return appconfig.YariaDownloadInFolder()
+}
+
+// SetDownloadInFolder toggles title-subfolder vs flat file layout (persisted).
+func (d *DownloadService) SetDownloadInFolder(inFolder bool) map[string]interface{} {
+	if err := appconfig.SetYariaDownloadInFolder(inFolder); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return map[string]interface{}{"status": "ok", "in_folder": inFolder}
 }
 
 // SetDownloadDir sets the default download directory (persisted for Bridge + app).

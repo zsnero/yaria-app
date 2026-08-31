@@ -6,6 +6,7 @@
 
   let speedLimit = $state(0);
   let maxConcurrent = $state(3);
+  let downloadInFolder = $state(false);
 
   const speedOptions = [
     { value: 0, label: 'Unlimited' },
@@ -34,6 +35,21 @@
     }
   }
 
+  async function handleFolderLayoutChange() {
+    try {
+      const res = await api.downloads.setDownloadInFolder(downloadInFolder);
+      if (res?.error) throw new Error(res.error);
+      toastSuccess('Settings saved');
+    } catch (err: any) {
+      toastError('Failed to save: ' + (err.message || ''));
+      try {
+        downloadInFolder = !!(await api.downloads.getDownloadInFolder());
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   onMount(async () => {
     try {
       const limit = await api.downloads.getSpeedLimit();
@@ -44,6 +60,12 @@
       const maxC = await api.downloads.getMaxConcurrent();
       if (maxC) maxConcurrent = maxC;
     } catch {}
+
+    try {
+      downloadInFolder = !!(await api.downloads.getDownloadInFolder());
+    } catch {
+      downloadInFolder = false;
+    }
   });
 </script>
 
@@ -62,6 +84,17 @@
       options={[1, 2, 3, 5, 10].map((n) => ({ value: n, label: String(n) }))}
       onchange={handleConcurrentChange}
     />
+  </div>
+  <div class="setting-group">
+    <div class="setting-label">Save into folder</div>
+    <div class="setting-desc">
+      When on, each download is stored as <code>Title/Title.mp4</code> (or .m4a, .mkv, …). When off, files are
+      saved flat as <code>Title.mp4</code> in the download directory.
+    </div>
+    <label class="toggle-row">
+      <input type="checkbox" bind:checked={downloadInFolder} onchange={handleFolderLayoutChange} />
+      <span>Create a folder named after the media</span>
+    </label>
   </div>
 </div>
 
@@ -97,5 +130,23 @@
     color: $text-muted;
     margin-bottom: 12px;
     line-height: 1.6;
+
+    code {
+      font-size: 11px;
+      color: $accent-hover;
+    }
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: $text-dim;
+
+    input[type='checkbox'] {
+      cursor: pointer;
+    }
   }
 </style>
