@@ -596,9 +596,17 @@ func (d *DownloadService) runDownload(id, url, resolution, downloadDir string, a
 		_, title, err := d.dl.GetMetadata([]string{url})
 		if err != nil {
 			errLow := strings.ToLower(err.Error())
-			// Soft-fail: missing title alone must not kill the download
+			// Soft-fail: missing title or auth noise must not kill the download —
+			// cookies are attached again during Download(); age-gated titles often
+			// already came from Fetch (OEmbed) while yt-dlp still needs browser cookies.
 			soft := strings.Contains(errLow, "no title found") ||
-				strings.Contains(errLow, "unable to extract title")
+				strings.Contains(errLow, "unable to extract title") ||
+				strings.Contains(errLow, "sign-in") ||
+				strings.Contains(errLow, "sign in") ||
+				strings.Contains(errLow, "age-restricted") ||
+				strings.Contains(errLow, "age restricted") ||
+				strings.Contains(errLow, "confirm your age") ||
+				strings.Contains(errLow, "cookies")
 			if soft {
 				d.mu.Lock()
 				if ad.Title == "" || ad.Title == ad.URL {
@@ -1870,10 +1878,13 @@ func classifyError(errMsg string) (string, string) {
 		return "disk_full", diskFullUserMsg
 	case strings.Contains(msg, "could not copy") && strings.Contains(msg, "cookie"),
 		strings.Contains(msg, "could not read browser cookies"),
-		strings.Contains(msg, "cookie database"):
-		return "cookies_locked", "Could not read browser cookies. Close Chrome/Edge completely and try again (public videos work without cookies)."
-	case strings.Contains(msg, "sign in") || strings.Contains(msg, "not a bot") || strings.Contains(msg, "cookies"):
-		return "auth", "Authentication required. Try logging into the site in your browser first."
+		strings.Contains(msg, "cookie database"),
+		strings.Contains(msg, "cannot decrypt"):
+		return "cookies_locked", "Could not read browser cookies. Use Firefox/LibreWolf logged into YouTube (Brave/Chrome cookies often can't be decrypted on Linux)."
+	case strings.Contains(msg, "sign in") || strings.Contains(msg, "sign-in") ||
+		strings.Contains(msg, "not a bot") || strings.Contains(msg, "confirm your age") ||
+		strings.Contains(msg, "cookies"):
+		return "auth", "Age-restricted / login required. Log into YouTube in Firefox or LibreWolf, then retry (Brave cookies often fail to decrypt)."
 	case strings.Contains(msg, "429") || strings.Contains(msg, "too many requests"):
 		return "rate_limit", "Rate limited. Wait a few minutes and try again."
 	case strings.Contains(msg, "geo") || strings.Contains(msg, "not available in your country") || strings.Contains(msg, "blocked"):
@@ -1888,7 +1899,7 @@ func classifyError(errMsg string) (string, string) {
 	case strings.Contains(msg, "network") || strings.Contains(msg, "connection") || strings.Contains(msg, "timeout"):
 		return "network", "Network error. Check your internet connection."
 	case strings.Contains(msg, "age") || strings.Contains(msg, "restricted"):
-		return "age_restricted", "Age-restricted content. Browser cookies are required."
+		return "age_restricted", "Age-restricted content. Log into YouTube in Firefox/LibreWolf and retry."
 	default:
 		return "unknown", errMsg
 	}
